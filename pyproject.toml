@@ -1,0 +1,21 @@
+[project]
+name = "xiantu-qwen-image21-workbench"
+version = "0.1.0"
+description = "Qwen Image 2.1 prompt, reference image, batch image, pose and LoRA management nodes for ComfyUI."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench"
+Documentation = "https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench#readme"
+"Bug Tracker" = "https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench/issues"
+
+[tool.comfy]
+PublisherId = "xiantuhenlan"
+DisplayName = "闲兔 Qwen Image 2.1 工作台"
+

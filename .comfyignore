@@ -1,0 +1,14 @@
+.github/
+.gitignore
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+*.bak
+*.zip
+CHANGELOG.md
+UPDATE_RULES.md
+plugin_manifest.json
+
