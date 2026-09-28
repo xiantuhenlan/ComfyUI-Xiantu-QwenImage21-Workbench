@@ -3,6 +3,7 @@
 .vscode/
 .idea/
 __pycache__/
+.ruff_cache/
 *.py[cod]
 *.log
 *.tmp
@@ -11,4 +12,3 @@ __pycache__/
 CHANGELOG.md
 UPDATE_RULES.md
 plugin_manifest.json
-
