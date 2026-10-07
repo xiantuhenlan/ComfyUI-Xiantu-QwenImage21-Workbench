@@ -1,11 +1,13 @@
 [project]
 name = "xiantu-qwen-image21-workbench"
-version = "0.1.1"
-description = "Qwen Image 2.1 prompt, reference image, batch image, pose and LoRA management nodes for ComfyUI."
+version = "0.1.2"
+description = "Qwen Image 2.1, storyboard and digital-human production workbenches for ComfyUI."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "faster-whisper==1.2.1",
+]
 classifiers = [
     "Operating System :: OS Independent",
 ]

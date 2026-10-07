@@ -86,9 +86,11 @@ class XiantuQwenImage21Director:
         for index, item in enumerate(raw_items, start=1):
             if isinstance(item, str):
                 relative_path = item.replace("\\", "/").strip()
+                source_type = "input"
             elif isinstance(item, dict):
-                if str(item.get("type", "input")) != "input":
-                    raise ValueError(f"第 {index} 张参考图不是 ComfyUI input 素材。")
+                source_type = str(item.get("type", "input")).strip().lower()
+                if source_type not in {"input", "output", "temp"}:
+                    raise ValueError(f"第 {index} 张参考图来源无效：{source_type}")
                 name = str(item.get("name", "")).replace("\\", "/").strip("/")
                 subfolder = str(item.get("subfolder", "")).replace("\\", "/").strip("/")
                 relative_path = posixpath.join(subfolder, name) if subfolder else name
@@ -104,9 +106,10 @@ class XiantuQwenImage21Director:
                 or ":" in normalized
             ):
                 raise ValueError(f"第 {index} 张参考图路径无效。")
-            if not folder_paths.exists_annotated_filepath(normalized):
+            annotated = normalized if source_type == "input" else f"{normalized} [{source_type}]"
+            if not folder_paths.exists_annotated_filepath(annotated):
                 raise ValueError(f"第 {index} 张参考图不存在：{normalized}")
-            paths.append(normalized)
+            paths.append(annotated)
         return paths
 
     @staticmethod
@@ -133,7 +136,27 @@ class XiantuQwenImage21Director:
         vae=None,
         分镜="",
     ):
-        del 分镜
+        if str(分镜 or "").strip():
+            try:
+                shot = json.loads(str(分镜))
+            except json.JSONDecodeError as error:
+                raise ValueError("分镜连线数据不是有效 JSON。") from error
+            if not isinstance(shot, dict):
+                raise ValueError("分镜连线必须输入当前分镜对象。")
+            positive_prompt = str(
+                shot.get("effective_positive")
+                or (shot.get("active_image_task") or {}).get("prompt")
+                or shot.get("positive")
+                or positive_prompt
+            )
+            negative_prompt = str(
+                shot.get("effective_negative") or shot.get("negative") or negative_prompt
+            )
+            shot_assets = shot.get("assets", [])
+            if shot_assets:
+                if not isinstance(shot_assets, list):
+                    raise ValueError("分镜参考素材必须是数组。")
+                reference_images = json.dumps(shot_assets, ensure_ascii=False)
         images = [
             self._load_image(path)
             for path in self._parse_reference_images(reference_images)

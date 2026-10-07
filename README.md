@@ -1,29 +1,35 @@
 # ComfyUI-Xiantu-QwenImage21-Workbench
 
-闲兔 Qwen Image 2.1 工作台是一组面向 ComfyUI 的素材、参考图和提示词管理节点。它不替换 Qwen Image 2.1 模型与采样工作流，主要负责在节点内整理提示词、参考图片、图片任务和 LoRA 配置，并输出可继续连接到现有工作流的结果。
+闲兔 Qwen Image 2.1 工作台是一组面向 ComfyUI 的图片素材、故事分镜和数字人生产节点。插件负责管理提示词、参考素材、音频分镜、任务队列和输出结果，不替换用户现有的 Qwen Image 2.1、MiniMax H3、采样器或视频保存工作流。
 
-## 功能
+## 主要功能
 
-- 文生图与图片编辑双入口。
-- 最多 16 张参考图，提示词中的 `<image1>`、`<image2>` 等引用与上传顺序对应。
-- 人物编辑、角色资产、商品设计、画面处理等预设功能。
-- 换装、换人、换背景、姿势迁移、发型妆容、多人物合成。
-- 角色设定图、三视图、四视图、表情九宫格、动作姿势表、服装方案。
-- 商品场景、多角度、模特展示、广告主图。
-- 删除内容、透明背景、添加物体、修改文字、风格转换、二次元转写实。
-- 多张图片独立保存功能、参考图和提示词，支持当前图片生成、勾选批量生成以及从当前图片继续生成。
-- 独立的闲兔姿势提取节点，结果保存到 `ComfyUI/output/xiantu_pose_extractions`。
-- 独立的闲兔 LoRA 管理器，支持多个 LoRA 的顺序、模型强度和用途备注。
+- Qwen Image 2.1 文生图、图片编辑、最多 16 张参考图和 `<imageN>` 图文引用。
+- 人物编辑、角色资产、商品设计、画面处理、姿势迁移和多人物合成预设。
+- 当前图片生成、勾选批量生成、从当前任务继续生成和结果回填。
+- 故事分镜导演台、故事模型与 LoRA、角色/场景/道具资产表和图片/视频分镜中转。
+- 数字人音频切分、连续分镜、参考图、持久资产库、批量顺序生成和生成结果管理。
+- 数字人近景运镜规则：禁止远景，同一运镜至少间隔五个分镜后才允许重复。
+- 放大前、放大后、合并成片分类和按分镜序号从小到大的成片合并。
+- 独立的姿势提取和 LoRA 管理节点。
 
 ## 节点
 
-安装后可在 `闲兔/Qwen Image 2.1` 分类中找到：
+安装后可以找到以下主要节点：
 
 - `闲兔Qwen Image 2.1 工作台`
 - `闲兔姿势提取`
 - `闲兔 LoRA 管理器`
+- `闲兔｜故事分镜导演台`
+- `闲兔｜故事模型与 LoRA`
+- `闲兔｜分镜中转器`
+- `闲兔｜数字人工作台`
+- `闲兔｜数字人工作台 V2`
+- `闲兔｜数字人图片输出`
+- `闲兔｜数字人提示词输出`
+- `闲兔｜数字人音乐输出`
 
-工作台输入 `clip`，可选输入 `vae`，输出 `positive`、`negative` 和 `latent`。输出可继续连接到现有 Qwen Image 2.1 采样和解码节点。
+数字人工作台 V2 当前注册 `H3模型`。H3 使用独立的 `H3_CLIP / H3_VIDEO_VAE / H3_AUDIO_VAE` 输入，以及条件、Latent、图像、音频、放大前文件名和放大后文件名输出。后续模型可以追加独立端口组，不会覆盖 H3 的参数和状态。
 
 ## 安装
 
@@ -33,43 +39,58 @@
 git clone https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench.git
 ```
 
-然后重启 ComfyUI，并在浏览器中强制刷新前端页面。
+安装 Python 依赖：
 
-也可以下载仓库 ZIP，解压到：
-
-```text
-ComfyUI/custom_nodes/ComfyUI-Xiantu-QwenImage21-Workbench
+```bash
+pip install -r ComfyUI-Xiantu-QwenImage21-Workbench/requirements.txt
 ```
 
-## 姿势提取可选依赖
+然后重启 ComfyUI，并在浏览器中强制刷新前端页面。也可以下载仓库 ZIP，解压到 `ComfyUI/custom_nodes/ComfyUI-Xiantu-QwenImage21-Workbench`。
 
-仅使用工作台和 LoRA 管理器时，不需要额外安装姿势提取依赖。
+## 自动优化提示词
+
+数字人工作台的“自动优化”会调用用户另外安装的 `ComfyUI_Qwen_H3_Prompt`：
+
+```text
+本插件数字人工作台
+  → ComfyUI_Qwen_H3_Prompt
+  → 该插件自己的 llama-server
+  → 用户准备的 GGUF 主模型与 mmproj
+```
+
+本插件不重复分发或维护 LLAMA 运行文件和 GGUF 模型。安装并正确配置 `ComfyUI_Qwen_H3_Prompt` 后，重启 ComfyUI 即可使用自动优化；关闭自动优化时不需要该插件。
+
+## 姿势提取可选依赖
 
 使用姿势提取功能时，需要安装 `comfyui_controlnet_aux`，并准备：
 
 - `yolox_l.onnx`
 - `dw-ll_ucoco_384_bs5.torchscript.pt`
 
-模型由 `comfyui_controlnet_aux` / DWPose 负责读取。本仓库不包含模型文件。
+模型由 `comfyui_controlnet_aux` / DWPose 负责读取。
 
-## 使用说明
+## 数字人结果目录
 
-1. 选择“文生图”或“图片编辑”。
-2. 选择具体功能及其子功能。
-3. 按参考图槽位上传图片，缩略图顺序就是 `<imageN>` 的编号。
-4. 应用提示词参考后，可继续手动修改正向和负向提示词。
-5. 多图片任务可勾选需要生成的图片；没有勾选时从当前图片开始依次提交。
-6. 将工作台的输出连接到原有 Qwen Image 2.1 采样流程。
+数字人输出默认按以下目录组织：
+
+```text
+ComfyUI/output/数字人/
+├─ 放大前/
+├─ 放大后/
+└─ 合并成品/
+```
+
+合并成片只接受“放大后”列表中的选中视频，后端会按分镜编号从小到大排序，并依次保存为 `成品-001.mp4`、`成品-002.mp4`。
 
 ## 模型与素材
 
-本仓库不分发 Qwen Image 2.1 模型、VAE、文本编码器、LoRA、DWPose 模型、用户上传图片或生成结果。请根据各模型原始许可证自行下载和使用。
+本仓库不分发 Qwen Image 2.1、MiniMax H3、VAE、文本编码器、LoRA、DWPose、GGUF 模型、用户上传素材、工作流或生成结果。请根据各模型和依赖的原始许可证自行准备。
 
 ## 更新
 
-本项目采用增量更新：每次版本只提交实际发生变化的文件，不以整包覆盖用户目录。版本说明记录在 [CHANGELOG.md](CHANGELOG.md)，完整更新规则见 [UPDATE_RULES.md](UPDATE_RULES.md)。
+本项目采用增量更新。版本说明记录在 [CHANGELOG.md](CHANGELOG.md)，完整规则见 [UPDATE_RULES.md](UPDATE_RULES.md)。
 
-已通过 Git 安装的用户可在插件目录执行：
+Git 安装用户可在插件目录执行：
 
 ```bash
 git pull --ff-only
@@ -80,4 +101,3 @@ git pull --ff-only
 ## 许可证
 
 代码使用 [MIT License](LICENSE) 开源。第三方模型、素材和依赖遵循各自许可证。
-
