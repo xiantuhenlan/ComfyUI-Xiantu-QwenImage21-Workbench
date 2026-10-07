@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "pluginId": "XiantuQwenImage21Director",
   "displayName": "闲兔 Qwen Image 2.1 导演台素材节点",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "channel": "development"
 }

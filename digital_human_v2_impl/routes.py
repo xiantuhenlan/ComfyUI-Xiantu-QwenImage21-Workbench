@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import mimetypes
 import io
+import importlib
 import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -27,6 +29,44 @@ def error(exc, status=400):
     return web.json_response({"ok": False, "error": str(exc)}, status=status)
 
 
+def qwen_h3_model_catalog():
+    """Read the same GGUF directory and classification used by Qwen H3 Prompt."""
+    module = None
+    for loaded in list(sys.modules.values()):
+        namespace = getattr(loaded, "__dict__", None) if loaded is not None else None
+        if isinstance(namespace, dict) and isinstance(namespace.get("QwenH3Prompt"), type):
+            module = loaded
+            break
+    if module is None:
+        for module_name in (
+            "ComfyUI_Qwen_H3_Prompt.node",
+            "custom_nodes.ComfyUI_Qwen_H3_Prompt.node",
+        ):
+            try:
+                module = importlib.import_module(module_name)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+
+    default_model = getattr(module, "DEFAULT_MODEL", "Qwen3.8-27B-Q4_K_M.gguf")
+    default_mmproj = getattr(module, "DEFAULT_MMPROJ", "mmproj-F16.gguf")
+    model_dir = Path(
+        getattr(module, "MODEL_DIR", Path(folder_paths.models_dir) / "LLM" / "Qwen3.8")
+    )
+    files = sorted(
+        (path.name for path in model_dir.glob("*.gguf") if path.is_file()),
+        key=str.casefold,
+    ) if model_dir.is_dir() else []
+    return {
+        "installed": module is not None,
+        "directory": str(model_dir),
+        "models": [name for name in files if "mmproj" not in name.lower()],
+        "projectors": [name for name in files if "mmproj" in name.lower()],
+        "default_model": default_model,
+        "default_projector": default_mmproj,
+    }
+
+
 async def multipart_fields(request):
     reader = await request.multipart()
     values, uploads = {}, {}
@@ -39,6 +79,14 @@ async def multipart_fields(request):
         else:
             values[part.name] = await part.text()
     return values, uploads
+
+
+@routes.get("/xiantu/dhv2/qwen-models")
+async def qwen_models(_request):
+    try:
+        return ok(**qwen_h3_model_catalog())
+    except Exception as exc:
+        return error(exc, 500)
 
 
 @routes.post("/xiantu/dhv2/projects")

@@ -122,9 +122,9 @@ function shell() {
         </div>
         <footer class="dh2-footer"><span data-summary>ⓘ 当前分镜：01 - 分镜 01　 音频时长：0.00 秒　 画幅：16:9　 尺寸：576 × 1024　 倍数：32</span><strong>● 准备就绪 · 请编辑分镜素材，然后连接后端工作流生成视频</strong></footer>
         <div class="dh2-asset-backdrop" data-asset-dialog hidden><section class="dh2-asset-dialog" role="dialog" aria-modal="true"><header><div class="dh2-title">${icon("picture")}<b>资产库</b><em data-asset-folder-name>尚未添加图片</em></div>${button("×","close","data-asset-close")}</header><div class="dh2-asset-actions">${button("批量上传图片","primary","data-asset-files-pick")}${button("全部选择","mini","data-asset-select-all")}${button("全部取消","mini","data-asset-select-none")}${button("删除选择","mini danger","data-asset-delete")}<span>可直接拖入图片；勾选后应用到当前分镜</span></div><nav class="dh2-asset-tabs"><button type="button" class="active" data-asset-category="all">全部资产</button><button type="button" data-asset-category="character">角色资产</button><button type="button" data-asset-category="scene">场景资产</button><button type="button" data-asset-category="prop">道具资产</button><button type="button" data-asset-category="other">其他资产</button></nav><div class="dh2-asset-grid" data-asset-grid></div><div class="dh2-asset-empty" data-asset-empty>点击“批量上传图片”或直接拖入图片添加素材</div><footer>${button("取消","mini","data-asset-close")}${button("应用选中","primary","data-asset-apply")}</footer></section></div>
-        <div class="dh2-opt-backdrop" data-opt-dialog hidden><section class="dh2-opt-dialog" role="dialog" aria-modal="true"><header><div class="dh2-title">${icon("spark")}<b>Qwen H3 优化设置</b></div>${button("×","close","data-opt-close")}</header><div class="dh2-opt-grid">
-          <label><span>语言模型</span><input data-opt-setting="llm_model" value="Qwen3.8-27B-Q4_K_M.gguf"></label>
-          <label><span>视觉模型</span><input data-opt-setting="vision_model" value="mmproj-F16.gguf"></label>
+        <div class="dh2-opt-backdrop" data-opt-dialog hidden><section class="dh2-opt-dialog" role="dialog" aria-modal="true"><header><div class="dh2-title">${icon("spark")}<b>Qwen H3 优化设置</b></div><div>${button("刷新模型","mini","data-opt-model-refresh")}${button("×","close","data-opt-close")}</div></header><div class="dh2-opt-grid">
+          <label><span>语言模型</span><select data-opt-setting="llm_model" data-opt-model="language"><option value="">正在读取模型…</option></select></label>
+          <label><span>视觉模型</span><select data-opt-setting="vision_model" data-opt-model="vision"><option value="">正在读取模型…</option></select></label>
           <label><span>推理强度</span><select data-opt-setting="reasoning_effort"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
           <label><span>最大 Token</span><input type="number" min="256" max="32768" step="256" data-opt-setting="max_tokens" value="8192"></label>
           <label><span>视频采样帧/秒</span><input type="number" min="1" max="16" step="1" data-opt-setting="video_sample_frames_per_sec" value="2"></label>
@@ -171,6 +171,38 @@ function studio(node) {
     const selected = () => state?.segments?.[Math.max(0, Math.min(state.selected_segment || 0, state.segments.length - 1))];
     const audioTracks = () => state?.audio_tracks || [];
     const selectedAudioTrack = () => audioTracks()[Math.max(0, Math.min(Number(state?.selected_audio_track || 0), audioTracks().length - 1))];
+    let qwenModelsLoaded = false;
+    const fillModelSelect = (select, names, current, fallback) => {
+        const available = Array.isArray(names) ? names : [];
+        const choices = [...available];
+        const saved = String(current || "");
+        if (saved && !choices.includes(saved)) choices.unshift(saved);
+        if (!choices.length && fallback) choices.push(String(fallback));
+        select.innerHTML = choices.length
+            ? choices.map(name => `<option value="${esc(name)}">${esc(name)}${name===saved&&!available.includes(name)?"（当前值，文件未找到）":""}</option>`).join("")
+            : '<option value="">未检测到 GGUF 模型</option>';
+        select.value = choices.includes(saved) ? saved : (choices[0] || "");
+    };
+    const loadQwenModels = async (force=false) => {
+        if (qwenModelsLoaded && !force) return;
+        const language = $(root, '[data-opt-model="language"]');
+        const vision = $(root, '[data-opt-model="vision"]');
+        language.disabled = vision.disabled = true;
+        try {
+            const data = await jsonFetch('/xiantu/dhv2/qwen-models');
+            fillModelSelect(language, data.models, state.settings.llm_model, data.default_model);
+            fillModelSelect(vision, data.projectors, state.settings.vision_model, data.default_projector);
+            qwenModelsLoaded = true;
+            if (!data.installed) notify('未检测到 ComfyUI_Qwen_H3_Prompt 插件', true);
+            else if (!data.models?.length || !data.projectors?.length) notify(`模型目录缺少 GGUF：${data.directory}`, true);
+        } catch (error) {
+            fillModelSelect(language, [], state.settings.llm_model, 'Qwen3.8-27B-Q4_K_M.gguf');
+            fillModelSelect(vision, [], state.settings.vision_model, 'mmproj-F16.gguf');
+            notify(`读取 Qwen H3 模型失败：${error.message}`, true);
+        } finally {
+            language.disabled = vision.disabled = false;
+        }
+    };
     const normalizeAudioTracks = () => {
         if(!state)return;
         if(!Array.isArray(state.audio_tracks))state.audio_tracks=[];
@@ -616,7 +648,8 @@ function studio(node) {
     $(root,"[data-auto-optimize]").onchange=async event=>{state.settings.auto_optimize=event.target.checked;await save();notify(event.target.checked?"已开启自动优化：生成时由工作台内部调用本地 Qwen H3 Prompt":"已关闭自动优化：直接使用原始提示词生成条件");};
     $$(root,"[data-model-profile]").forEach(button=>button.onclick=async()=>{const profile=button.dataset.modelProfile;if(profile!=="h3")return;state.settings.model_profile=profile;await save();renderForm();notify("当前数字人模型：H3模型");});
     const optimizationDialog=$(root,"[data-opt-dialog]");
-    $(root,"[data-opt-open]").onclick=()=>{optimizationDialog.hidden=false;};
+    $(root,"[data-opt-open]").onclick=async()=>{optimizationDialog.hidden=false;await loadQwenModels();};
+    $(root,"[data-opt-model-refresh]").onclick=async()=>{qwenModelsLoaded=false;await loadQwenModels(true);};
     $$(root,"[data-opt-close]").forEach(button=>button.onclick=()=>{optimizationDialog.hidden=true;});
     optimizationDialog.onclick=event=>{if(event.target===optimizationDialog)optimizationDialog.hidden=true;};
     $$(root,"[data-opt-setting]").forEach(el=>el.onchange=async()=>{const key=el.dataset.optSetting;let value=el.type==="checkbox"?el.checked:el.value;if(el.type==="number")value=Number(value);state.settings[key]=value;await save();});

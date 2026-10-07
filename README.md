@@ -58,7 +58,7 @@ pip install -r ComfyUI-Xiantu-QwenImage21-Workbench/requirements.txt
   → 用户准备的 GGUF 主模型与 mmproj
 ```
 
-本插件不重复分发或维护 LLAMA 运行文件和 GGUF 模型。安装并正确配置 `ComfyUI_Qwen_H3_Prompt` 后，重启 ComfyUI 即可使用自动优化；关闭自动优化时不需要该插件。
+本插件不重复分发或维护 LLAMA 运行文件和 GGUF 模型。安装并正确配置 `ComfyUI_Qwen_H3_Prompt` 后，重启 ComfyUI 即可使用自动优化；关闭自动优化时不需要该插件。优化设置会自动扫描 `ComfyUI/models/LLM/Qwen3.8` 下的 GGUF 文件，并分别提供语言模型与 `mmproj` 视觉模型下拉选择。
 
 ## 姿势提取可选依赖
 
