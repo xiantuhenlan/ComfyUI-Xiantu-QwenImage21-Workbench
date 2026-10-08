@@ -388,6 +388,58 @@ function ensureSamplerLatent(prompt, textMode) {
     });
     return repaired;
 }
+function waitForPromptCompletion(promptId) {
+    const expectedId = String(promptId || "");
+    if (!expectedId) return Promise.reject(new Error("任务编号为空，无法等待生成完成"));
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let pollTimer = 0;
+        const detailOf = (event) => event?.detail && typeof event.detail === "object" ? event.detail : {};
+        const matches = (event) => String(detailOf(event).prompt_id || "") === expectedId;
+        const cleanup = () => {
+            if (pollTimer) clearTimeout(pollTimer);
+            api.removeEventListener?.("execution_success", onSuccess);
+            api.removeEventListener?.("execution_error", onFailure);
+            api.removeEventListener?.("execution_interrupted", onFailure);
+        };
+        const finish = (error = null) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (error) reject(error); else resolve();
+        };
+        const onSuccess = (event) => { if (matches(event)) finish(); };
+        const onFailure = (event) => {
+            if (!matches(event)) return;
+            const detail = detailOf(event);
+            finish(new Error(detail.exception_message || detail.error || "当前图片生成失败，已停止后续批量任务"));
+        };
+        const pollHistory = async () => {
+            if (settled) return;
+            try {
+                const response = await api.fetchApi(`/history/${encodeURIComponent(expectedId)}`);
+                if (response.ok) {
+                    const history = await response.json();
+                    const entry = history?.[expectedId] || Object.values(history || {})[0];
+                    const status = entry?.status || {};
+                    if (status.completed === true || status.status_str === "success") return finish();
+                    if (status.status_str === "error") {
+                        const message = [...(status.messages || [])].reverse().find((item) => item?.[0] === "execution_error")?.[1]?.exception_message;
+                        return finish(new Error(message || "当前图片生成失败，已停止后续批量任务"));
+                    }
+                }
+            } catch {
+                // WebSocket events remain the primary completion signal. A
+                // temporary history read failure must not duplicate a task.
+            }
+            pollTimer = window.setTimeout(pollHistory, 1000);
+        };
+        api.addEventListener("execution_success", onSuccess);
+        api.addEventListener("execution_error", onFailure);
+        api.addEventListener("execution_interrupted", onFailure);
+        pollTimer = window.setTimeout(pollHistory, 1000);
+    });
+}
 function optionFor(preset, optionId) { return (preset.options || []).find((option) => option[0] === optionId) || preset.options?.[0]; }
 function assignedReferencePrompt(preset, assets = []) {
     if (preset.group === "free") return "";
@@ -502,21 +554,12 @@ function createDirectorUi(node) {
         const order = new Map(preset.slots.map((slot, index) => [slot[0], index]));
         assets.sort((a, b) => (order.get(a.slotKey) ?? 1000) - (order.get(b.slotKey) ?? 1000));
     };
-    const syncCanvasMode = () => {
-        const switchNode = (app.graph?._nodes || []).find((item) => item?.type === "ComfySwitchNode" && String(item.title || "").includes("custom_size 画布切换"));
-        const switchWidget = findWidget(switchNode, "switch");
-        if (!switchWidget) return;
-        const useEmptyLatent = isTextMode(activeMode);
-        if (switchWidget.value !== useEmptyLatent) switchWidget.value = useEmptyLatent;
-        switchNode?.setDirtyCanvas?.(true, true);
-    };
     const syncBackendWidgets = () => {
         sortAssets(PRESETS[activeMode]);
         if (assetsWidget) assetsWidget.value = JSON.stringify(assets);
         if (promptWidget) promptWidget.value = positive.value;
         if (negativeWidget) negativeWidget.value = negative.value;
         if (resolutionWidget) resolutionWidget.value = 1024;
-        syncCanvasMode();
     };
     const persist = () => {
         const current = workbench.states[activeMode] || {};
@@ -786,13 +829,14 @@ function createDirectorUi(node) {
                 activeShotId = shot.id; storyboard.activeShotId = shot.id; workbench = clone(shot.workbench); loadMode(workbench.activeMode); persist();
                 setQueueStatus(`正在提交 ${shotLabel(storyboard.shots.indexOf(shot))}（${index + 1}/${shots.length}）…`);
                 await new Promise((resolve) => requestAnimationFrame(resolve));
-                syncCanvasMode();
                 const prompt = await app.graphToPrompt();
                 ensureSamplerLatent(prompt, isTextMode(activeMode));
                 const result = await api.queuePrompt(0, prompt);
                 if (!result?.prompt_id) throw new Error(`${shotLabel(storyboard.shots.indexOf(shot))} 没有返回任务编号`);
+                setQueueStatus(`正在生成 ${shotLabel(storyboard.shots.indexOf(shot))}（${index + 1}/${shots.length}），完成后自动继续下一张…`);
+                await waitForPromptCompletion(result.prompt_id);
             }
-            setQueueStatus(`已按顺序提交 ${shots.length} 张图片，ComfyUI 将依次生成。`);
+            setQueueStatus(`已按顺序完成 ${shots.length} 张图片。`);
         } catch (error) {
             setQueueStatus(`提交失败：${String(error?.message || error)}`, true);
         } finally {
