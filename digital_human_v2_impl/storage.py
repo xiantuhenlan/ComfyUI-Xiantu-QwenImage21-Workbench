@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -11,6 +12,7 @@ import folder_paths
 
 ROOT = Path(folder_paths.get_output_directory()) / "XiantuDigitalHumanV2" / "projects"
 PROJECT_RE = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
+STATE_LOCK = threading.RLock()
 
 
 def project_dir(project_id: str) -> Path:
@@ -86,10 +88,11 @@ def create_project() -> dict:
 
 
 def read_state(project_id: str) -> dict:
-    path = project_dir(project_id) / "state.json"
-    if not path.is_file():
-        raise FileNotFoundError("数字人项目不存在")
-    return normalize_state(json.loads(path.read_text(encoding="utf-8")))
+    with STATE_LOCK:
+        path = project_dir(project_id) / "state.json"
+        if not path.is_file():
+            raise FileNotFoundError("数字人项目不存在")
+        return normalize_state(json.loads(path.read_text(encoding="utf-8")))
 
 
 def normalize_state(state: dict) -> dict:
@@ -196,14 +199,47 @@ def normalize_state(state: dict) -> dict:
 
 
 def save_state(state: dict) -> dict:
-    state = normalize_state(state)
-    path = project_dir(state.get("id"))
-    path.mkdir(parents=True, exist_ok=True)
-    state_file = path / "state.json"
-    temporary = state_file.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(state_file)
-    return state
+    with STATE_LOCK:
+        state = normalize_state(state)
+        path = project_dir(state.get("id"))
+        path.mkdir(parents=True, exist_ok=True)
+        state_file = path / "state.json"
+        temporary = state_file.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(state_file)
+        return state
+
+
+def save_state_preserving_generated_prompts(state: dict, writable_segment_ids: set[str]) -> dict:
+    """Atomically preserve backend-generated prompts during ordinary UI saves."""
+    with STATE_LOCK:
+        try:
+            current_state = read_state(state.get("id"))
+        except FileNotFoundError:
+            current_state = {}
+        current_segments = current_state.get("segments", [])
+        current_by_id = {
+            str(segment.get("id")): segment
+            for segment in current_segments
+            if isinstance(segment, dict) and segment.get("id") is not None
+        }
+        for index, segment in enumerate(state.get("segments", [])):
+            if not isinstance(segment, dict):
+                continue
+            segment_id = str(segment.get("id", ""))
+            if segment_id in writable_segment_ids:
+                continue
+            current_segment = current_by_id.get(segment_id)
+            if current_segment is None and index < len(current_segments):
+                candidate = current_segments[index]
+                current_segment = candidate if isinstance(candidate, dict) else None
+            if not current_segment:
+                continue
+            if "optimized_prompt" in current_segment:
+                segment["optimized_prompt"] = current_segment.get("optimized_prompt", "")
+            if "optimization_engine" in current_segment:
+                segment["optimization_engine"] = current_segment.get("optimization_engine")
+        return save_state(state)
 
 
 def safe_media(project_id: str, relative: str) -> Path:

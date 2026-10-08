@@ -257,11 +257,14 @@ function studio(node) {
         if (segmentWidget) segmentWidget.value = state?.selected_segment || 0;
         node.setDirtyCanvas?.(true, true);
     };
-    const save = async () => {
+    const save = async ({writeOptimizedPrompt=false}={}) => {
         if (!state) return;
         const ticket = ++saving;
         try {
-            const data = await jsonFetch(endpoint(state), {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(state)});
+            const payload = writeOptimizedPrompt
+                ? {...state, _write_optimized_prompt_ids:[String(selected()?.id || "")]}
+                : state;
+            const data = await jsonFetch(endpoint(state), {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
             if (ticket === saving) state = data.project;
             syncWidgets();
         } catch (error) { notify(error.message, true); }
@@ -642,8 +645,8 @@ function studio(node) {
     $$ (root,"[data-setting]").forEach(el=>el.onchange=async()=>{state.settings[el.dataset.setting]=el.value;calculate(false);await save();renderForm();});
     $(root,"[data-ref-size]").onchange=e=>{state.settings.reference_size=e.target.value;save();};$(root,"[data-fps]").onchange=e=>{state.settings.fps=Number(e.target.value);save();};
     $(root,"[data-filename-prefix]").oninput=event=>{state.settings.filename_prefix=event.target.value.slice(0,80);clearTimeout(root._saveFilenamePrefix);root._saveFilenamePrefix=setTimeout(save,350);};
-    $$(root,"[data-prompt-tab]").forEach(tab=>tab.onclick=()=>{promptView=tab.dataset.promptTab==="optimized"?"optimized":"original";renderPrompt();$(root,"[data-original-count]").textContent=String(promptView==="optimized"?selected().optimized_prompt||"":selected().original_prompt||"").length;});
-    promptEditor.oninput=event=>{const field=promptEditor.dataset.promptMode==="optimized"?"optimized_prompt":"original_prompt";selected()[field]=promptText();$(root,"[data-original-count]").textContent=selected()[field].length;rememberPromptRange();if(event.data==="@"||selected()[field].endsWith("@"))showMentionMenu();else $(root,"[data-mention-menu]").hidden=true;clearTimeout(root._saveText);root._saveText=setTimeout(save,350);};
+    $$(root,"[data-prompt-tab]").forEach(tab=>tab.onclick=async()=>{promptView=tab.dataset.promptTab==="optimized"?"optimized":"original";if(promptView==="optimized"){try{const data=await jsonFetch(endpoint(state));state=data.project;state.results||=[];normalizeAudioTracks();normalizeSegments();syncWidgets();}catch{}}renderPrompt();$(root,"[data-original-count]").textContent=String(promptView==="optimized"?selected().optimized_prompt||"":selected().original_prompt||"").length;});
+    promptEditor.oninput=event=>{const field=promptEditor.dataset.promptMode==="optimized"?"optimized_prompt":"original_prompt";selected()[field]=promptText();$(root,"[data-original-count]").textContent=selected()[field].length;rememberPromptRange();if(event.data==="@"||selected()[field].endsWith("@"))showMentionMenu();else $(root,"[data-mention-menu]").hidden=true;clearTimeout(root._saveText);root._saveText=setTimeout(()=>save({writeOptimizedPrompt:field==="optimized_prompt"}),350);};
     promptEditor.onkeyup=rememberPromptRange;promptEditor.onmouseup=rememberPromptRange;promptEditor.onfocus=rememberPromptRange;
     $(root,"[data-auto-optimize]").onchange=async event=>{state.settings.auto_optimize=event.target.checked;await save();notify(event.target.checked?"已开启自动优化：生成时由工作台内部调用本地 Qwen H3 Prompt":"已关闭自动优化：直接使用原始提示词生成条件");};
     $$(root,"[data-model-profile]").forEach(button=>button.onclick=async()=>{const profile=button.dataset.modelProfile;if(profile!=="h3")return;state.settings.model_profile=profile;await save();renderForm();notify("当前数字人模型：H3模型");});
@@ -653,7 +656,7 @@ function studio(node) {
     $$(root,"[data-opt-close]").forEach(button=>button.onclick=()=>{optimizationDialog.hidden=true;});
     optimizationDialog.onclick=event=>{if(event.target===optimizationDialog)optimizationDialog.hidden=true;};
     $$(root,"[data-opt-setting]").forEach(el=>el.onchange=async()=>{const key=el.dataset.optSetting;let value=el.type==="checkbox"?el.checked:el.value;if(el.type==="number")value=Number(value);state.settings[key]=value;await save();});
-    $(root,"[data-clear-prompt]").onclick=()=>{promptEditor.replaceChildren();selected()[promptView==="optimized"?"optimized_prompt":"original_prompt"]="";save();renderForm();};
+    $(root,"[data-clear-prompt]").onclick=()=>{promptEditor.replaceChildren();selected()[promptView==="optimized"?"optimized_prompt":"original_prompt"]="";save({writeOptimizedPrompt:promptView==="optimized"});renderForm();};
     const removeLegacyOptimizerLinks=()=>{
         const graph=node.graph||app.graph;if(!graph)return 0;const ids=[];
         for(const output of node.outputs||[])for(const linkId of output?.links||[]){const link=graph.links?.[linkId],target=link?graph.getNodeById?.(link.target_id):null;if(String(target?.comfyClass||target?.type)==="QwenH3PromptLocal")ids.push(linkId);}

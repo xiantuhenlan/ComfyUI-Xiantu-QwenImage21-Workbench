@@ -15,7 +15,14 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-from .storage import create_project, project_dir, read_state, safe_media, save_state
+from .storage import (
+    create_project,
+    project_dir,
+    read_state,
+    safe_media,
+    save_state,
+    save_state_preserving_generated_prompts,
+)
 
 
 routes = PromptServer.instance.routes
@@ -113,7 +120,16 @@ async def put_project(request):
         state = await request.json()
         if state.get("id") != request.match_info["project_id"]:
             raise ValueError("项目编号不一致")
-        return ok(project=save_state(state))
+        explicit_optimized_ids = {
+            str(value)
+            for value in state.pop("_write_optimized_prompt_ids", [])
+            if str(value)
+        }
+        return ok(
+            project=save_state_preserving_generated_prompts(
+                state, explicit_optimized_ids
+            )
+        )
     except Exception as exc:
         return error(exc)
 
