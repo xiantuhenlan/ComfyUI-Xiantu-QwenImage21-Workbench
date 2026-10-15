@@ -76,7 +76,7 @@ pip install -r ComfyUI-Xiantu-QwenImage21-Workbench/requirements.txt
 数字人输出默认按以下目录组织：
 
 ```text
-ComfyUI/output/数字人/
+ComfyUI/output/短剧-漫剧/
 ├─ 放大前/
 ├─ 放大后/
 └─ 合并成品/

@@ -57,7 +57,7 @@ function shell() {
                 ${button(`${icon("export")} 导出分镜`, "mini", "data-export")}
               </div>
               <div class="dh2-nav"><label class="dh2-current-label">当前分镜<select data-current></select></label>${button("← 上一分镜", "mini", "data-prev")}${button("下一分镜 →", "mini", "data-next")}${button("＋ 增加分镜", "mini primary", "data-new-right")}</div>
-              <div class="dh2-generate-row"><label class="dh2-filename-prefix"><span>保存文件名</span><input type="text" maxlength="80" placeholder="留空按分镜名；例：天华 或 /西游记/天华" title="命名规则与 V3 导演台一致；输出目录会自动分到数字人/放大前和数字人/放大后" data-filename-prefix></label>${button("▶ 开始生成", "generate", "data-generate")}</div>
+              <div class="dh2-generate-row"><label class="dh2-filename-prefix"><span>保存文件名</span><input type="text" maxlength="80" placeholder="留空按分镜名；例：天华 或 /西游记/天华" title="命名规则与 V3 导演台一致；输出目录会自动分到短剧-漫剧/放大前和短剧-漫剧/放大后" data-filename-prefix></label>${button("▶ 开始生成", "generate", "data-generate")}</div>
             </div>
           </div>
         </section>
@@ -147,6 +147,7 @@ function studio(node) {
     const hoverLine = $(root, "[data-hover-line]");
     const promptEditor = $(root, "[data-original]");
     let state = null, decoded = null, zoom = 1, showMarkers = true, saving = 0, playFrame = 0, zoomFrame = 0, audioSeekToken = 0, audioSeeking = false;
+    let audioContext = null, localAudioUrl = "";
     let pinnedTime = 0, selectedCutIndex = -1, promptRange = null, promptView = "original", resultView = "after", previewResultId = "", generationActive = false, generationPercent = 0, generationResetTimer = 0, generationPulseTimer = 0, generationOwnerToken = "";
     let assetMode = false, assetFiles = [], assetCategory = "all", assetTargetSegmentIndex = 0, pendingRefSegmentIndex = 0;
     const refFields = {current:"refs"};
@@ -217,12 +218,34 @@ function studio(node) {
         if(last&&duration>Number(last.start))last.end=duration;
     };
     const media = path => endpoint(state, `/media/${String(path).split("/").map(encodeURIComponent).join("/")}`);
-    const loadSelectedAudioTrack = async () => {
+    const decodeAudio = async buffer => {
+        audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+        return audioContext.decodeAudioData(buffer.slice(0));
+    };
+    const loadSelectedAudioTrack = async ({keepDecoded=false, localFile=null}={}) => {
         normalizeAudioTracks();
-        decoded=null;audio.pause();audio.removeAttribute("src");audio.load();
+        if(!keepDecoded)decoded=null;
+        audio.pause();
+        if(localAudioUrl){URL.revokeObjectURL(localAudioUrl);localAudioUrl="";}
+        audio.removeAttribute("src");audio.load();
         if(!audioTracks().length){drawWave();return;}
-        const source=`${endpoint(state,"/audio/mix")}?t=${Date.now()}`;audio.src=source;audio.load();
-        try{decoded=await new AudioContext().decodeAudioData(await (await fetch(source,{cache:"no-store"})).arrayBuffer());}catch(error){notify(`音轨读取失败：${error.message}`,true);}
+        const activeTracks=audioTracks().filter(track=>!track.muted);
+        const directTrack=activeTracks.length===1
+            && Math.abs(Number(activeTracks[0].offset||0))<.001
+            && Math.abs(Number(activeTracks[0].volume??1)-1)<.001
+            ? activeTracks[0] : null;
+        const source=directTrack
+            ? `${media(directTrack.path)}?t=${Date.now()}`
+            : `${endpoint(state,"/audio/mix")}?t=${Date.now()}`;
+        if(localFile){localAudioUrl=URL.createObjectURL(localFile);audio.src=localAudioUrl;}else audio.src=source;
+        audio.load();
+        if(!keepDecoded){
+            try{
+                const response=await fetch(source,{cache:"no-store"});
+                if(!response.ok)throw new Error(`HTTP ${response.status}`);
+                decoded=await decodeAudio(await response.arrayBuffer());
+            }catch(error){notify(`音轨读取失败：${error.message}`,true);}
+        }
         drawWave();
     };
     const refsFor = () => selected()?.refs || [];
@@ -568,7 +591,20 @@ function studio(node) {
         if (!isAudio) return notify("请拖入有效的音频文件", true);
         notify("正在上传音频…");
         const form=new FormData();form.append("file",file,file.name);form.append("mode",mode);if(mode==="replace"&&selectedAudioTrack()?.id)form.append("track_id",selectedAudioTrack().id);
-        try { const data=await jsonFetch(endpoint(state,"/audio"),{method:"POST",body:form});state=data.project;normalizeAudioTracks();selectedCutIndex=-1;const buffer=await file.arrayBuffer();const uploaded=await new AudioContext().decodeAudioData(buffer.slice(0));const track=selectedAudioTrack();if(track)track.duration=uploaded.duration;await save();pinnedTime=Number(selectedAudioTrack()?.offset||0);await loadSelectedAudioTrack();render();notify(mode==="replace"?"当前音频片段已替换":"音频片段已接到上一段后面"); }
+        try {
+            const data=await jsonFetch(endpoint(state,"/audio"),{method:"POST",body:form});
+            state=data.project;normalizeAudioTracks();selectedCutIndex=-1;
+            const uploaded=await decodeAudio(await file.arrayBuffer());
+            const track=selectedAudioTrack();if(track)track.duration=uploaded.duration;
+            decoded=uploaded;
+            await save();pinnedTime=Number(selectedAudioTrack()?.offset||0);
+            // A single uploaded/replaced track can be played and drawn from the
+            // local file immediately.  Do not discard it and synchronously
+            // download/decode the same long file again.
+            if(audioTracks().length===1)await loadSelectedAudioTrack({keepDecoded:true,localFile:file});
+            else await loadSelectedAudioTrack();
+            render();notify(mode==="replace"?"当前音频片段已替换":"音频片段已接到上一段后面");
+        }
         catch(error){notify(error.message,true);}
     }
     async function uploadRefs(files, targetIndex=pendingRefSegmentIndex) {
@@ -603,7 +639,7 @@ function studio(node) {
         } catch(error){notify(`加载项目失败：${error.message}`,true);}
     }
 
-    const closeStudio=()=>{if(generationActive){root.hidden=true;return;}cancelAnimationFrame(playFrame);cancelAnimationFrame(zoomFrame);clearTimeout(generationResetTimer);clearInterval(generationPulseTimer);api.removeEventListener?.("executed",captureResult);api.removeEventListener?.("execution_start",generationStarted);api.removeEventListener?.("progress",generationProgress);api.removeEventListener?.("executing",generationExecuting);api.removeEventListener?.("execution_success",generationSucceeded);api.removeEventListener?.("execution_error",generationFailed);api.removeEventListener?.("execution_interrupted",generationFailed);if(node._dh2Studio===root)node._dh2Studio=null;root.remove();};
+    const closeStudio=()=>{if(generationActive){root.hidden=true;return;}cancelAnimationFrame(playFrame);cancelAnimationFrame(zoomFrame);clearTimeout(generationResetTimer);clearInterval(generationPulseTimer);if(localAudioUrl)URL.revokeObjectURL(localAudioUrl);audioContext?.close?.();api.removeEventListener?.("executed",captureResult);api.removeEventListener?.("execution_start",generationStarted);api.removeEventListener?.("progress",generationProgress);api.removeEventListener?.("executing",generationExecuting);api.removeEventListener?.("execution_success",generationSucceeded);api.removeEventListener?.("execution_error",generationFailed);api.removeEventListener?.("execution_interrupted",generationFailed);if(node._dh2Studio===root)node._dh2Studio=null;root.remove();};
     root._close=closeStudio;
     $(root,"[data-close]").onclick=closeStudio;
     api.addEventListener("executed",captureResult);

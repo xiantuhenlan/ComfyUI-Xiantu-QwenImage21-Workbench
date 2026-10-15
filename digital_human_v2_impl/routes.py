@@ -146,6 +146,21 @@ async def mixed_audio(request):
         tracks = state.get("audio_tracks") or []
         if not tracks:
             raise FileNotFoundError("项目还没有音频")
+        # The common case is one untouched track.  Serving the uploaded file
+        # directly lets aiohttp handle byte ranges without rebuilding a large
+        # PCM WAV for every browser range request (which made long MP3 files
+        # appear as 00:00 and left the waveform blank).
+        active_tracks = [item for item in tracks if not item.get("muted")]
+        if len(active_tracks) == 1:
+            item = active_tracks[0]
+            source = project_dir(project_id) / str(item.get("path") or "")
+            if (source.is_file()
+                    and abs(float(item.get("offset") or 0)) < 0.001
+                    and abs(float(item.get("volume", 1.0)) - 1.0) < 0.001):
+                return web.FileResponse(
+                    path=source,
+                    headers={"Cache-Control": "no-store", "Accept-Ranges": "bytes"},
+                )
         sample_rate = max((int(item.get("sample_rate") or 0) for item in tracks), default=0) or 44100
         total_length = max(1, round(float(state.get("duration") or 0) * sample_rate))
         mixed = np.zeros((total_length, 2), dtype=np.float32)
@@ -441,7 +456,7 @@ async def merge_results(request):
         if not ffmpeg:
             raise RuntimeError("未找到 ffmpeg，无法合并视频")
         sources = [_output_file(item) for item in records]
-        directory = Path(folder_paths.get_output_directory()) / "数字人" / "合并成品"
+        directory = Path(folder_paths.get_output_directory()) / "短剧-漫剧" / "合并成品"
         directory.mkdir(parents=True, exist_ok=True)
         counters = []
         for path in directory.glob("成品-*.mp4"):

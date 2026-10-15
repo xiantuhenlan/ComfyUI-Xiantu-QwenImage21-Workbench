@@ -241,7 +241,7 @@ def video_filename_prefixes(settings: dict, segment: dict, segment_index: int) -
             relative = f"{number:02d}-{clean_part(segment.get('name'), f'分镜 {number:02d}')}"
     else:
         relative = f"{number:02d}-{clean_part(segment.get('name'), f'分镜 {number:02d}')}"
-    return (f"数字人/放大前/{relative}", f"数字人/放大后/{relative}")
+    return (f"短剧-漫剧/放大前/{relative}", f"短剧-漫剧/放大后/{relative}")
 
 
 MODEL_ADAPTERS = {
