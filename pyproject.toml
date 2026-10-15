@@ -7,6 +7,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "faster-whisper==1.2.1",
+    "soundfile",
 ]
 classifiers = [
     "Operating System :: OS Independent",
