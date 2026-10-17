@@ -1202,6 +1202,7 @@ function createWorkbench(node) {
         for (const file of images) {
             const form = new FormData();
             form.append("category", category);
+            form.append("library_scope", categoryOverride || libraryCategory);
             form.append("name", file.name.replace(/\.[^.]+$/, ""));
             form.append("note", "");
             form.append("media", file, file.name || "asset.png");

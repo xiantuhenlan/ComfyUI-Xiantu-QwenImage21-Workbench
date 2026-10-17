@@ -186,11 +186,47 @@ def _asset_root() -> Path:
             continue
         if resolved.is_dir() and not resolved.is_symlink() and not _is_reparse(resolved):
             return resolved
-    raise _AssetLibraryError(
-        "asset_root_not_found",
-        f"公共资产库未建立或未定位：请在启动器包根建立“{_ASSET_ROOT_NAME}”文件夹",
-        404,
-    )
+
+    # First-run initialization: the launcher normally injects the canonical
+    # shared-library path.  Standalone ComfyUI users do not have that
+    # environment variable, so create the library beside the ComfyUI folder.
+    # Never create it inside custom_nodes or silently choose an arbitrary
+    # ancestor.
+    target = Path(configured).expanduser() if configured else comfy_root.parent / _ASSET_ROOT_NAME
+    try:
+        target = target.resolve()
+        parent = target.parent.resolve()
+        if not parent.is_dir() or parent.is_symlink() or _is_reparse(parent):
+            raise OSError("资产库父目录不可用")
+        if target.exists() and (not target.is_dir() or target.is_symlink() or _is_reparse(target)):
+            raise OSError("资产库路径不是普通目录")
+        target.mkdir(exist_ok=True)
+        return target
+    except OSError as error:
+        raise _AssetLibraryError(
+            "asset_root_create_failed",
+            f"公共资产库自动创建失败：{target}（{error}）",
+        ) from error
+
+
+def _ensure_asset_categories(root: Path, selection: str) -> None:
+    categories = tuple(_ASSET_CATEGORIES) if selection == "all" else (selection,)
+    if any(category not in _ASSET_CATEGORIES for category in categories):
+        raise _AssetLibraryError("asset_category_invalid", "未知资产分类")
+    for category in categories:
+        category_dir = root / _ASSET_CATEGORIES[category]
+        try:
+            category_dir.mkdir(exist_ok=True)
+        except OSError as error:
+            raise _AssetLibraryError(
+                "asset_category_create_failed",
+                f"资产分类目录自动创建失败：{category_dir}（{error}）",
+            ) from error
+        if not category_dir.is_dir() or category_dir.is_symlink() or _is_reparse(category_dir):
+            raise _AssetLibraryError(
+                "asset_category_create_failed",
+                f"资产分类目录不可用：{category_dir}",
+            )
 
 
 def _utc_now():
@@ -409,7 +445,7 @@ async def common_asset_content(request):
 async def import_common_asset(request):
     try:
         reader = await request.multipart()
-        fields = {"category": "other", "name": "", "note": ""}
+        fields = {"category": "other", "library_scope": "", "name": "", "note": ""}
         file_name = ""
         file_bytes = None
         while field := await reader.next():
@@ -422,6 +458,8 @@ async def import_common_asset(request):
             raise _AssetLibraryError("asset_import_invalid", "资产为空或超过 128 MiB")
         category = fields["category"] if fields["category"] in _ASSET_CATEGORIES else "other"
         root = _asset_root()
+        scope = fields["library_scope"] if fields["library_scope"] in (*_ASSET_CATEGORIES, "all") else category
+        _ensure_asset_categories(root, scope)
         with _asset_metadata_lock(root):
             snapshot = _reconcile_asset_library(root)
             destination = _unique_asset_path(root / _ASSET_CATEGORIES[category], file_name)
