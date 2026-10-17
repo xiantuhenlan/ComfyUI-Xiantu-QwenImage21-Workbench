@@ -62,6 +62,8 @@ class XiantuLoraManager:
         return {
             "required": {
                 "model": ("MODEL",),
+            },
+            "optional": {
                 "lora_catalog": (_lora_catalog(),),
                 "lora_stack": (
                     "STRING",
@@ -88,7 +90,7 @@ class XiantuLoraManager:
         self._loaded_loras[path] = (signature, lora, metadata)
         return lora, metadata
 
-    def apply_loras(self, model, lora_catalog, lora_stack):
+    def apply_loras(self, model, lora_catalog=None, lora_stack="[]"):
         del lora_catalog
         entries = _parse_stack(lora_stack)
         active_paths = set()
@@ -119,7 +121,7 @@ class XiantuLoraManager:
         return model, "\n".join(summary)
 
     @classmethod
-    def VALIDATE_INPUTS(cls, lora_stack, **_kwargs):
+    def VALIDATE_INPUTS(cls, lora_stack="[]", **_kwargs):
         try:
             for entry in _parse_stack(lora_stack):
                 folder_paths.get_full_path_or_raise("loras", entry["name"])
@@ -128,7 +130,7 @@ class XiantuLoraManager:
         return True
 
     @classmethod
-    def IS_CHANGED(cls, lora_stack, **_kwargs):
+    def IS_CHANGED(cls, lora_stack="[]", **_kwargs):
         digest = hashlib.sha256(str(lora_stack).encode("utf-8"))
         try:
             for entry in _parse_stack(lora_stack):

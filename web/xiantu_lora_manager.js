@@ -21,8 +21,8 @@ function ensureStyles() {
 function findWidget(node, name) { return (node.widgets || []).find((widget) => widget.name === name); }
 function hideWidget(widget) {
     if (!widget || widget.__xlmHidden) return;
-    widget.__xlmHidden = true; widget.origType ??= widget.type; widget.type = "converted-widget"; widget.hidden = true;
-    widget.computeSize = () => [0, -4]; widget.draw = () => {}; widget.mouse = () => false; widget.serializeValue = async () => widget.value;
+    widget.__xlmHidden = true; widget.hidden = true;
+    widget.computeSize = () => [0, -4]; widget.draw = () => {}; widget.mouse = () => false; widget.serializeValue = () => widget.value;
     if (widget.element) widget.element.style.display = "none";
 }
 function parseStack(value) {
@@ -72,7 +72,7 @@ function createManagerUi(node) {
         try {
             const response = await api.fetchApi(`/object_info/${NODE_NAME}`); const payload = await response.json();
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            catalog = [...(payload?.[NODE_NAME]?.input?.required?.lora_catalog?.[0] || [])].filter((name) => name && name !== EMPTY_LORA_LABEL);
+            catalog = [...(payload?.[NODE_NAME]?.input?.optional?.lora_catalog?.[0] || payload?.[NODE_NAME]?.input?.required?.lora_catalog?.[0] || [])].filter((name) => name && name !== EMPTY_LORA_LABEL);
             if (catalogWidget) { catalogWidget.options ??= {}; catalogWidget.options.values = catalog.length ? catalog : [EMPTY_LORA_LABEL]; catalogWidget.value = catalog[0] || EMPTY_LORA_LABEL; }
             setStatus(`已读取 ${catalog.length} 个 LoRA 文件`); render();
         } catch (error) { setStatus(`刷新失败：${String(error?.message || error)}`, true); }
