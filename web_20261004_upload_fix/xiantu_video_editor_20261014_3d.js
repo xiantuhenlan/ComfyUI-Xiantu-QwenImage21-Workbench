@@ -435,9 +435,10 @@ function createWorkbench(node) {
         if (path.includes("/放大前/") || /^H3_Director_Final/i.test(String(result?.filename || ""))) return "before";
         return "after";
     };
+    const referenceSizeExplicitAtLoad = initialState.referenceSizeExplicit === true;
     let shots = Array.isArray(initialState.shots) && initialState.shots.length
-        ? initialState.shots.map((shot, index) => ({ ...shot, id: String(shot.id || makeId()), title: String(shot.title || `分镜 ${index + 1}`), selected: shot.selected !== false, prompt: String(shot.prompt || ""), mode: String(shot.mode || "reference"), seconds: Number(shot.seconds || 5), inheritPrevious: index > 0 && (shot.inheritPrevious ?? initialState.continuityEnabled ?? true), referenceSize: shot.referenceSize === "max" || (shot.referenceSize == null && initialState.referenceSize === "max") ? "max" : "match" }))
-        : [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "max" }];
+        ? initialState.shots.map((shot, index) => ({ ...shot, id: String(shot.id || makeId()), title: String(shot.title || `分镜 ${index + 1}`), selected: shot.selected !== false, prompt: String(shot.prompt || ""), mode: String(shot.mode || "reference"), seconds: Number(shot.seconds || 5), inheritPrevious: index > 0 && (shot.inheritPrevious ?? initialState.continuityEnabled ?? true), referenceSize: referenceSizeExplicitAtLoad && (shot.referenceSize === "max" || (shot.referenceSize == null && initialState.referenceSize === "max")) ? "max" : "match" }))
+        : [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "match" }];
     let activeShotId = String(initialState.activeShotId || shots[0].id);
     if (!shots.some((shot) => shot.id === activeShotId)) activeShotId = shots[0].id;
     const assetList = savedAssetRecords.map((asset) => ({
@@ -458,7 +459,8 @@ function createWorkbench(node) {
         url: persistedAssetUrl(asset),
     }));
     let filenamePrefix = String(persistedFilenamePrefix !== null ? persistedFilenamePrefix : (initialState.filenamePrefix || ""));
-    let referenceSize = initialState.referenceSize === "max" ? "max" : "match";
+    let referenceSizeExplicit = referenceSizeExplicitAtLoad;
+    let referenceSize = referenceSizeExplicit && initialState.referenceSize === "max" ? "max" : "match";
     let modelProfile = ["minimax-h3"].includes(String(initialState.modelProfile)) ? String(initialState.modelProfile) : "minimax-h3";
     const resolutionRatios = { "1:1": 1, "2:3": 2 / 3, "3:2": 3 / 2, "3:4": 3 / 4, "4:3": 4 / 3, "9:16": 9 / 16, "16:9": 16 / 9, "21:9": 21 / 9 };
     const resolutionState = {
@@ -667,6 +669,7 @@ function createWorkbench(node) {
             modelProfile,
             filenamePrefix,
             referenceSize,
+            referenceSizeExplicit,
             resolution: { ...resolutionState, ...resolutionFor() },
             timelineScale,
             continuityEnabled,
@@ -1139,6 +1142,7 @@ function createWorkbench(node) {
             activeShotId = shots[0].id;
             continuityEnabled = Boolean(shots[0].inheritPrevious);
             referenceSize = shots[0].referenceSize;
+            referenceSizeExplicit = shots.some((shot) => shot.referenceSize === "max");
             q("[data-filename-prefix]").value = filenamePrefix;
             renderShots(); loadShot(); renderTimeline(); save();
             sheetButtonStatus(button, `已导入 ${shots.length} 条`);
@@ -1617,7 +1621,9 @@ function createWorkbench(node) {
     };
     q("[data-clear-shots]").onclick = () => {
         assetList.forEach((asset) => URL.revokeObjectURL(asset.url)); assetList.splice(0); selectedAssetIds.clear();
-        shots = [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "max" }];
+        referenceSize = "match";
+        referenceSizeExplicit = false;
+        shots = [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "match" }];
         activeShotId = shots[0].id; renderShots(); loadShot(); save();
     };
     q("[data-prev-shot]").onclick = () => moveShot(-1);
@@ -1752,7 +1758,7 @@ function createWorkbench(node) {
         renderResolutionSettings();
         save();
     };
-    q("[data-reference-size]").onchange = (event) => { referenceSize = event.target.value === "max" ? "max" : "match"; if (activeShot()) activeShot().referenceSize = referenceSize; save(); };
+    q("[data-reference-size]").onchange = (event) => { referenceSize = event.target.value === "max" ? "max" : "match"; referenceSizeExplicit = true; if (activeShot()) activeShot().referenceSize = referenceSize; save(); };
     root.querySelectorAll("[data-model-profile]").forEach((button) => {
         button.classList.toggle("active", button.dataset.modelProfile === modelProfile);
         button.onclick = () => {
