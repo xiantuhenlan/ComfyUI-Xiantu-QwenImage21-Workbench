@@ -236,6 +236,10 @@ function createWorkbench(node) {
             <div><b><span data-progress-title>等待生成</span><em data-progress-action></em></b><span data-progress-batch>分镜 0/0</span></div>
             <progress data-progress-bar max="100" value="0"></progress>
           </div>
+          <div class="xve-error-notice" data-error-notice hidden role="alert">
+            <div><strong data-error-title>生成失败</strong><span data-error-message></span></div>
+            <button type="button" data-error-close title="关闭错误提示" aria-label="关闭错误提示">×</button>
+          </div>
           <button type="button" class="xve-settings-button" data-settings-toggle title="生成设置" aria-label="生成设置">⚙</button>
           <button type="button" data-close-workbench title="关闭工作台" aria-label="关闭工作台">×</button>
           <div class="xve-generation-settings" data-generation-settings hidden>
@@ -390,6 +394,15 @@ function createWorkbench(node) {
       </section>`;
 
     const q = (selector) => root.querySelector(selector);
+    const showDirectorError = (message = "", nodeId = "") => {
+        const notice = q("[data-error-notice]");
+        const text = String(message || "").trim();
+        notice.hidden = !text;
+        q("[data-error-title]").textContent = nodeId ? `节点 ${nodeId} 执行失败` : "生成失败";
+        q("[data-error-message]").textContent = text;
+        notice.title = text;
+    };
+    q("[data-error-close]").onclick = () => showDirectorError();
     const editorStateWidget = (node.widgets || []).find((widget) => widget.name === "editor_state");
     const input = q("[data-file-input]");
     const assetsElement = q("[data-assets]");
@@ -1967,7 +1980,17 @@ function createWorkbench(node) {
             }
             if (!runtime.busy) { runtime.externalBusy = false; stopGenerationClock(); setGenerationProgress(); }
         },
-        execution_error: () => { if (!runtime.busy) { runtime.externalBusy = false; stopGenerationClock(); setGenerationProgress(); } },
+        execution_error: (event) => {
+            const detail = event?.detail || {};
+            const nodeId = detail.node_id ?? detail.node ?? detail.last_node_id ?? "";
+            const message = detail.exception_message || detail.error || detail.exception_type || "ComfyUI 节点执行失败";
+            showDirectorError(message, nodeId);
+            if (!runtime.busy) {
+                runtime.externalBusy = false;
+                stopGenerationClock();
+                setGenerationProgress({ title: `生成失败：${String(message)}`, actionDetail: "", batchDetail: runtimeBatchDetail(), percent: 0, phase: "prepare", phasePercent: 0 });
+            }
+        },
         execution_interrupted: () => { if (!runtime.busy) { runtime.externalBusy = false; stopGenerationClock(); setGenerationProgress(); } },
     };
     Object.entries(globalExecutionHandlers).forEach(([name, handler]) => api.addEventListener?.(name, handler));
@@ -2652,6 +2675,7 @@ function createWorkbench(node) {
         }, 1000);
     });
     const startGenerate = async () => {
+        showDirectorError();
         if (runtime.busy) return;
         updatePrompt();
         const originalShotId = activeShotId;
@@ -2785,6 +2809,7 @@ function createWorkbench(node) {
                 runtime.buttonText = "生成失败";
                 button.textContent = runtime.buttonText;
                 button.title = String(error?.message || error);
+                showDirectorError(String(error?.message || error));
                 setGenerationProgress({ title: `生成失败：${String(error?.message || error)}`, actionDetail: "", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "prepare", phasePercent: 0 });
             }
         } finally {

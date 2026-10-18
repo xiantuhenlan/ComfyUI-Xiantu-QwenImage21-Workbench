@@ -251,16 +251,12 @@ class XiantuSelfLiftContinuationLatent:
 
     def adapt(self, latent, preserve_video_mask=True):
         output = dict(latent)
-        mask = output.get("noise_mask")
-        if not preserve_video_mask:
-            output.pop("noise_mask", None)
-            return (output,)
-        if mask is None or torch.is_tensor(mask):
-            return (output,)
-        streams = _streams(mask)
-        if not streams or not torch.is_tensor(streams[0]):
-            raise TypeError("SelfLift 承接适配器没有收到有效的视频遮罩。")
-        output["noise_mask"] = streams[0]
+        # SelfLift rejects every noise_mask when highres_tiling is enabled.
+        # The workbench keeps the approved AV continuation latent unchanged
+        # and restores its anchored region in XiantuSelfLiftContinuationBlend.
+        # Always remove the sampler-facing mask here so prompts produced by an
+        # older cached browser script cannot reintroduce the incompatible pair.
+        output.pop("noise_mask", None)
         return (output,)
 
 
