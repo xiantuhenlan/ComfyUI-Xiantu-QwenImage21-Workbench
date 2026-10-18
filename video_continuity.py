@@ -233,6 +233,71 @@ class XiantuVideoContinuationModelPatch:
         return (install_prefix_remask(model, latent, sigmas),)
 
 
+class XiantuSelfLiftContinuationLatent:
+    """Adapt the workbench AV mask to the selected SelfLift execution path."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "preserve_video_mask": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "adapt"
+    CATEGORY = "闲兔/视频编辑"
+
+    def adapt(self, latent, preserve_video_mask=True):
+        output = dict(latent)
+        mask = output.get("noise_mask")
+        if not preserve_video_mask:
+            output.pop("noise_mask", None)
+            return (output,)
+        if mask is None or torch.is_tensor(mask):
+            return (output,)
+        streams = _streams(mask)
+        if not streams or not torch.is_tensor(streams[0]):
+            raise TypeError("SelfLift 承接适配器没有收到有效的视频遮罩。")
+        output["noise_mask"] = streams[0]
+        return (output,)
+
+
+class XiantuSelfLiftContinuationBlend:
+    """Restore the continuation anchor after either SelfLift sampling mode."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"generated": ("LATENT",), "source": ("LATENT",)}}
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "blend"
+    CATEGORY = "闲兔/视频编辑"
+
+    def blend(self, generated, source):
+        mask = source.get("noise_mask")
+        if mask is None:
+            return (generated,)
+        generated_streams = _streams(generated.get("samples"))
+        source_streams = _streams(source.get("samples"))
+        mask_streams = _streams(mask)
+        if len(generated_streams) != len(source_streams):
+            raise ValueError("SelfLift 分块承接的音视频流数量不一致。")
+        blended = []
+        for index, (current, anchor) in enumerate(zip(generated_streams, source_streams)):
+            stream_mask = mask_streams[min(index, len(mask_streams) - 1)]
+            if not torch.is_tensor(stream_mask):
+                raise TypeError("SelfLift 分块承接没有收到有效遮罩。")
+            stream_mask = stream_mask.to(device=current.device, dtype=current.dtype)
+            anchor = anchor.to(device=current.device, dtype=current.dtype)
+            blended.append(current * stream_mask + anchor * (1.0 - stream_mask))
+        output = dict(generated)
+        output["samples"] = _nested(*blended) if len(blended) == 2 else blended[0]
+        output.pop("noise_mask", None)
+        return (output,)
+
+
 class XiantuVideoContinuationTrim:
     @classmethod
     def INPUT_TYPES(cls):
@@ -276,10 +341,14 @@ class XiantuVideoContinuationTrim:
 
 NODE_CLASS_MAPPINGS = {
     "XiantuVideoContinuationModelPatch": XiantuVideoContinuationModelPatch,
+    "XiantuSelfLiftContinuationLatent": XiantuSelfLiftContinuationLatent,
+    "XiantuSelfLiftContinuationBlend": XiantuSelfLiftContinuationBlend,
     "XiantuVideoContinuationTrim": XiantuVideoContinuationTrim,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "XiantuVideoContinuationModelPatch": "闲兔｜视频承接动态重绘",
+    "XiantuSelfLiftContinuationLatent": "闲兔｜SelfLift 承接适配",
+    "XiantuSelfLiftContinuationBlend": "闲兔｜SelfLift 承接合成",
     "XiantuVideoContinuationTrim": "闲兔｜视频承接精确裁剪",
 }

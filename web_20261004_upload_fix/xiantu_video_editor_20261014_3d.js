@@ -5,11 +5,30 @@ const NODE = "XiantuVideoEditorWorkbench";
 const WORKBENCH_LOGO_URL = new URL("./assets/xiantu-rabbit-logo.png", import.meta.url).href;
 
 {
+    const styleUrl = new URL("./xiantu_video_editor.css?v=20261018-02", import.meta.url).href;
     const link = document.querySelector("link[data-xiantu-video-editor-style]") || document.createElement("link");
     link.rel = "stylesheet";
-    link.href = new URL("./xiantu_video_editor.css?v=20261017-01", import.meta.url).href;
+    link.href = styleUrl;
     link.dataset.xiantuVideoEditorStyle = "1";
     if (!link.isConnected) document.head.appendChild(link);
+    let fallbackStarted = false;
+    const installInlineFallback = async () => {
+        if (fallbackStarted || document.querySelector("style[data-xiantu-video-editor-inline-style]")) return;
+        fallbackStarted = true;
+        try {
+            const response = await fetch(styleUrl, { cache: "no-store" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const style = document.createElement("style");
+            style.dataset.xiantuVideoEditorInlineStyle = "1";
+            style.textContent = await response.text();
+            document.head.appendChild(style);
+        } catch (error) {
+            fallbackStarted = false;
+            console.error("闲兔视频编辑工作台样式加载失败", error);
+        }
+    };
+    link.addEventListener("error", installInlineFallback, { once: true });
+    installInlineFallback();
 }
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
@@ -2359,7 +2378,41 @@ function createWorkbench(node) {
         if (shot?.inheritPrevious) {
             let samplerCount = 0;
             for (const [samplerId, sampler] of Object.entries(nodes)) {
-                if (String(sampler?.class_type || "") !== "SamplerCustomAdvanced" || !dependsOn(samplerId, workbenchId)) continue;
+                const samplerType = String(sampler?.class_type || "");
+                if (!dependsOn(samplerId, workbenchId)) continue;
+                if (samplerType === "SelfLiftH3Sampler") {
+                    // The workbench carries separate video/audio masks in a
+                    // NestedTensor. Keep SelfLift's own tiling switch untouched
+                    // and use the same native H3 guide + anchor restoration
+                    // continuation path in both SelfLift modes.
+                    sampler.inputs ||= {};
+                    const latentLink = sampler.inputs.latent_image;
+                    if (!Array.isArray(latentLink)) continue;
+                    const adapterId = allocateId();
+                    nodes[adapterId] = {
+                        class_type: "XiantuSelfLiftContinuationLatent",
+                        inputs: { latent: latentLink, preserve_video_mask: false },
+                    };
+                    sampler.inputs.latent_image = [adapterId, 0];
+                    const blendId = allocateId();
+                    nodes[blendId] = {
+                        class_type: "XiantuSelfLiftContinuationBlend",
+                        inputs: { generated: [samplerId, 0], source: latentLink },
+                    };
+                    for (const [consumerId, consumer] of Object.entries(nodes)) {
+                        if (consumerId === blendId) continue;
+                        for (const [inputName, inputValue] of Object.entries(consumer?.inputs || {})) {
+                            if (Array.isArray(inputValue)
+                                && String(inputValue[0]) === String(samplerId)
+                                && Number(inputValue[1]) === 0) {
+                                consumer.inputs[inputName] = [blendId, 0];
+                            }
+                        }
+                    }
+                    samplerCount += 1;
+                    continue;
+                }
+                if (samplerType !== "SamplerCustomAdvanced") continue;
                 const guiderLink = sampler.inputs?.guider;
                 const sigmaLink = sampler.inputs?.sigmas;
                 if (!Array.isArray(guiderLink) || !Array.isArray(sigmaLink)) continue;
@@ -2373,7 +2426,7 @@ function createWorkbench(node) {
                 guider.inputs.model = [patchId, 0];
                 samplerCount += 1;
             }
-            if (!samplerCount) throw new Error("承接已开启，但没有找到连接到本工作台的 SamplerCustomAdvanced，无法启用采样阶段动态重绘");
+            if (!samplerCount) throw new Error("承接已开启，但没有找到连接到本工作台且支持动态重绘的 H3 采样器");
         }
 
         let trimCount = 0;

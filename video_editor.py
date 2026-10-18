@@ -241,9 +241,24 @@ class XiantuVideoEditorWorkbench:
             if not bool(shot.get("inheritPrevious")):
                 return result_pair
             positive, latent = result_pair
+            frames = previous_video_frames()
+            # Anchor the generated sequence to the final frame of the previous
+            # clip through H3's native keyframe conditioning. This remains
+            # active for both regular and SelfLift tiled sampling paths.
+            guide = _resize_video_frames(frames[-1:], width, height)
+            guide_latent = vae.encode(guide)
+            existing_keyframes = list(positive[0][1].get("minimax_keyframes", [])) if positive else []
+            existing_keyframes = [
+                item for item in existing_keyframes
+                if int(item.get("resolved_frame_index", -1)) != 0
+            ]
+            positive = node_helpers.conditioning_set_values(
+                positive,
+                {"minimax_keyframes": [{"resolved_frame_index": 0, "latent": guide_latent}] + existing_keyframes},
+            )
             return positive, _apply_visual_continuation(
                 latent,
-                previous_video_frames(),
+                frames,
                 previous_cache.get("audio"),
                 vae,
                 audio_vae,
