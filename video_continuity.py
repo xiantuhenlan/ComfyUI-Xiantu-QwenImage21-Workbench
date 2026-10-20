@@ -52,6 +52,45 @@ def _resize_frames(frames, width, height):
     return resized[:, :, top:top + height, left:left + width].movedim(1, -1)
 
 
+def _repair_leading_white_flash(images, start, stop, max_probe=4):
+    """Replace a transient overexposed seam without changing frame count."""
+    output = images[start:stop]
+    if start < 1 or int(output.shape[0]) < 2:
+        return output
+
+    probe_count = min(max(1, int(max_probe)), int(output.shape[0]) - 1)
+    anchor_rgb = images[start - 1:start, ..., :3].float()
+    probe_rgb = output[:probe_count + 1, ..., :3].float()
+    reduce_dims = tuple(range(1, probe_rgb.ndim))
+    anchor_mean = float(anchor_rgb.mean())
+    means = probe_rgb.mean(dim=reduce_dims)
+    deviations = probe_rgb.std(dim=reduce_dims, unbiased=False)
+
+    leading_flash = 0
+    for index in range(probe_count):
+        if (float(means[index]) >= 0.82
+                and float(deviations[index]) <= 0.30
+                and float(means[index]) - anchor_mean >= 0.20):
+            leading_flash += 1
+        else:
+            break
+    if leading_flash < 1:
+        return output
+
+    recovery_mean = float(means[leading_flash])
+    flash_floor = float(means[:leading_flash].min())
+    if flash_floor - max(anchor_mean, recovery_mean) < 0.18:
+        return output
+
+    repaired = output.clone()
+    anchor = images[start - 1:start].to(device=repaired.device, dtype=repaired.dtype)
+    recovery = output[leading_flash:leading_flash + 1]
+    for index in range(leading_flash):
+        alpha = float(index + 1) / float(leading_flash + 1)
+        repaired[index:index + 1] = torch.lerp(anchor, recovery, alpha)
+    return repaired
+
+
 def _prefix_weights(prefix_steps, seam_min):
     taper = max(1, min(4, int(prefix_steps)))
     weights = torch.ones(int(prefix_steps), dtype=torch.float32)
@@ -317,7 +356,7 @@ class XiantuVideoContinuationTrim:
         requested_keep = max(1, int(keep_frames))
         start = max(0, min(int(trim_frames), int(images.shape[0])))
         stop = min(int(images.shape[0]), start + requested_keep)
-        output_images = images[start:stop]
+        output_images = _repair_leading_white_flash(images, start, stop)
         if int(output_images.shape[0]) < requested_keep:
             last_frame = output_images[-1:] if int(output_images.shape[0]) else images[-1:]
             repeats = (requested_keep - int(output_images.shape[0]),) + (1,) * (last_frame.ndim - 1)

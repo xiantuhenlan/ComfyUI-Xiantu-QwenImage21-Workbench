@@ -34,6 +34,37 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
 }[char]));
 const makeId = () => globalThis.crypto?.randomUUID?.() || `xve_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+const freshSeed = () => {
+    const words = new Uint32Array(2);
+    globalThis.crypto?.getRandomValues?.(words);
+    if (!words[0] && !words[1]) {
+        words[0] = Math.floor(Math.random() * 0x100000000);
+        words[1] = Math.floor(Math.random() * 0x100000000);
+    }
+    return words[0] * 0x200000 + (words[1] & 0x1fffff);
+};
+const refreshWorkflowSeed = () => {
+    const seed = freshSeed();
+    const seedNames = new Set(["seed", "noise_seed", "随机种子", "噪声种子"]);
+    for (const graphNode of app.graph?._nodes || []) {
+        for (const widget of graphNode.widgets || []) {
+            if (!seedNames.has(String(widget?.name || "").toLowerCase())) continue;
+            widget.value = seed;
+        }
+    }
+    app.graph?.setDirtyCanvas?.(true, true);
+    return seed;
+};
+const injectWorkflowSeed = (prompt, seed) => {
+    const seedNames = new Set(["seed", "noise_seed", "随机种子", "噪声种子"]);
+    for (const promptNode of Object.values(prompt?.output || {})) {
+        for (const [name, value] of Object.entries(promptNode?.inputs || {})) {
+            if (!seedNames.has(String(name).toLowerCase()) || Array.isArray(value)) continue;
+            if (typeof value === "number" || /^\d+$/.test(String(value))) promptNode.inputs[name] = seed;
+        }
+    }
+    return prompt;
+};
 const finalizedVideoNames = new Map();
 const finalizedVideoUrl = (source) => {
     try {
@@ -2732,8 +2763,11 @@ function createWorkbench(node) {
                 runtime.buttonText = "■ 停止生成";
                 button.textContent = runtime.buttonText;
                 await reportPreparationStep(11, preparationSteps, "保存工作台状态", "分镜、参数和参考素材");
-                await reportPreparationStep(12, preparationSteps, "读取工作流节点", "收集节点与连接");
+                const shotSeed = refreshWorkflowSeed();
+                shot.lastSeed = shotSeed;
+                await reportPreparationStep(12, preparationSteps, "读取工作流节点", `收集节点与连接 · 随机种子 ${shotSeed}`);
                 const graphPrompt = await app.graphToPrompt();
+                injectWorkflowSeed(graphPrompt, shotSeed);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
                 await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? "采样重绘和上下文裁剪" : "无需承接，保持原工作流");
                 const continuityPrompt = injectContinuationPipeline(graphPrompt, shot);
