@@ -2711,7 +2711,14 @@ function createWorkbench(node) {
         updatePrompt();
         const originalShotId = activeShotId;
         const selected = shots.filter((shot) => shot.selected);
-        const jobs = selected.length ? selected : [activeShot()].filter(Boolean);
+        const activeIndex = Math.max(0, shots.findIndex((shot) => shot.id === activeShotId));
+        // A lone active check is the normal per-shot navigation state, not an
+        // instruction to stop the director after one shot. Keep explicit
+        // multi-shot selections, otherwise continue sequentially from the
+        // current shot through the remainder of the storyboard.
+        const jobs = selected.length > 1 || (selected.length === 1 && selected[0].id !== activeShotId)
+            ? selected
+            : shots.slice(activeIndex);
         const button = q("[data-generate]");
         runtime.busy = true;
         runtime.cancelRequested = false;
