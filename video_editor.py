@@ -124,7 +124,7 @@ def _dimensions(state):
         return width, height
     ratios = {"1:1": 1.0, "2:3": 2 / 3, "3:2": 3 / 2, "3:4": 3 / 4, "4:3": 4 / 3, "9:16": 9 / 16, "16:9": 16 / 9, "21:9": 21 / 9}
     ratio = ratios.get(str(resolution.get("aspect") or "16:9"), 16 / 9)
-    pixels = max(0.1, min(2.0, float(resolution.get("megapixels") or 1.0))) * 1024 * 1024
+    pixels = max(0.1, min(3.0, float(resolution.get("megapixels") or 1.0))) * 1024 * 1024
     return (
         max(32, round(math.sqrt(pixels * ratio) / 32) * 32),
         max(32, round(math.sqrt(pixels / ratio) / 32) * 32),

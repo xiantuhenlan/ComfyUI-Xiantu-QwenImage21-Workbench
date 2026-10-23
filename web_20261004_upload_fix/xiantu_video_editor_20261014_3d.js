@@ -528,7 +528,7 @@ function createWorkbench(node) {
     const resolutionRatios = { "1:1": 1, "2:3": 2 / 3, "3:2": 3 / 2, "3:4": 3 / 4, "4:3": 4 / 3, "9:16": 9 / 16, "16:9": 16 / 9, "21:9": 21 / 9 };
     const resolutionState = {
         aspect: resolutionRatios[initialState.resolution?.aspect] ? initialState.resolution.aspect : "16:9",
-        megapixels: Math.max(0.1, Math.min(2, Number(initialState.resolution?.megapixels || 1))),
+        megapixels: Math.max(0.1, Math.min(3, Number(initialState.resolution?.megapixels || 1))),
         multiple: 32,
         fps: 24,
     };
@@ -595,7 +595,7 @@ function createWorkbench(node) {
         if (!aspect || !megapixels) return;
         aspect.value = resolutionState.aspect;
         if (!megapixels.options.length) {
-            for (let index = 1; index <= 20; index += 1) {
+            for (let index = 1; index <= 30; index += 1) {
                 const value = (index / 10).toFixed(1);
                 const option = document.createElement("option");
                 option.value = value;
@@ -1154,8 +1154,8 @@ function createWorkbench(node) {
             const resolutionText = valueAt(first, "分辨率");
             const mpMatch = resolutionText.match(/([0-9]+(?:\.[0-9]+)?)\s*MP/i);
             const sizeMatch = resolutionText.match(/(\d+)\s*[x×*]\s*(\d+)/i);
-            if (mpMatch) resolutionState.megapixels = Math.max(0.1, Math.min(2, Number(mpMatch[1]) || 1));
-            else if (sizeMatch) resolutionState.megapixels = Math.max(0.1, Math.min(2, Math.round((Number(sizeMatch[1]) * Number(sizeMatch[2]) / (1024 * 1024)) * 10) / 10));
+            if (mpMatch) resolutionState.megapixels = Math.max(0.1, Math.min(3, Number(mpMatch[1]) || 1));
+            else if (sizeMatch) resolutionState.megapixels = Math.max(0.1, Math.min(3, Math.round((Number(sizeMatch[1]) * Number(sizeMatch[2]) / (1024 * 1024)) * 10) / 10));
             filenamePrefix = valueAt(first, "保存文件名");
 
             const importedShots = [];
@@ -1817,7 +1817,7 @@ function createWorkbench(node) {
         save();
     };
     q("[data-video-megapixels]").onchange = (event) => {
-        resolutionState.megapixels = Math.max(0.1, Math.min(2, Number(event.target.value) || 1));
+        resolutionState.megapixels = Math.max(0.1, Math.min(3, Number(event.target.value) || 1));
         renderResolutionSettings();
         save();
     };
