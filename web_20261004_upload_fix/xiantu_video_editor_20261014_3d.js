@@ -2489,6 +2489,12 @@ function createWorkbench(node) {
             .filter(([targetId, target]) => /(?:CreateVideo|VHS_VideoCombine|SaveVideo|VideoCombine)/i.test(String(target?.class_type || "")) && dependsOn(targetId, workbenchId))
             .sort(([leftId], [rightId]) => dependsOn(rightId, leftId) ? -1 : dependsOn(leftId, rightId) ? 1 : 0);
         for (const [targetId, target] of saveTargets) {
+            // The workbench timeline is fixed at 24 FPS. Normalize downstream
+            // encoders so a stale 48 FPS setting cannot turn a 10-second,
+            // 240-frame result into a 5-second exported file.
+            target.inputs ||= {};
+            if (Object.prototype.hasOwnProperty.call(target.inputs, "frame_rate")) target.inputs.frame_rate = resolutionState.fps;
+            if (Object.prototype.hasOwnProperty.call(target.inputs, "fps")) target.inputs.fps = resolutionState.fps;
             const imageLink = target.inputs?.images;
             if (!Array.isArray(imageLink)) continue;
             // A downstream encoder (for example the post-upscale VHS encoder)
@@ -2888,8 +2894,10 @@ function createWorkbench(node) {
     root.querySelectorAll("[data-result-tab]").forEach((tab) => tab.onclick = () => { resultView = tab.dataset.resultTab; renderResults(); save(); });
     q("[data-result-folder]").onclick = () => openOutputFolder().catch((error) => { q("[data-result-folder]").title = String(error.message || error); });
     q("[data-result-merge]").onclick = async () => {
-        const chosen = results.filter((result) => result.selected && resultKind(result) === "after").sort((left, right) => shots.findIndex((shot) => String(shot.id) === String(left.shotId)) - shots.findIndex((shot) => String(shot.id) === String(right.shotId)));
-        if (chosen.length < 2) { q("[data-result-merge]").title = "请在“放大后”中至少勾选两个视频"; return; }
+        const mergeKind = resultView === "before" ? "before" : resultView === "after" ? "after" : "";
+        if (!mergeKind) { q("[data-result-merge]").title = "请先切换到“放大前”或“放大后”列表"; return; }
+        const chosen = results.filter((result) => result.selected && resultKind(result) === mergeKind).sort((left, right) => shots.findIndex((shot) => String(shot.id) === String(left.shotId)) - shots.findIndex((shot) => String(shot.id) === String(right.shotId)));
+        if (!chosen.length) { q("[data-result-merge]").title = `请先在“${mergeKind === "before" ? "放大前" : "放大后"}”中勾选视频`; return; }
         const button = q("[data-result-merge]");
         button.disabled = true; button.textContent = "合并中";
         try {
