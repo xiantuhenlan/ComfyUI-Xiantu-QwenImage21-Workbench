@@ -52,42 +52,64 @@ def _resize_frames(frames, width, height):
     return resized[:, :, top:top + height, left:left + width].movedim(1, -1)
 
 
-def _repair_leading_white_flash(images, start, stop, max_probe=4):
-    """Replace a transient overexposed seam without changing frame count."""
+def _repair_leading_seam(images, start, stop, max_probe=8):
+    """Suppress a white/bright pulse at a continuation cut without changing timing."""
     output = images[start:stop]
-    if start < 1 or int(output.shape[0]) < 2:
+    frame_count = int(output.shape[0])
+    if start < 1 or frame_count < 2:
         return output
 
-    probe_count = min(max(1, int(max_probe)), int(output.shape[0]) - 1)
-    anchor_rgb = images[start - 1:start, ..., :3].float()
-    probe_rgb = output[:probe_count + 1, ..., :3].float()
+    probe_count = min(max(2, int(max_probe)), frame_count)
+    anchor_start = max(0, int(start) - 3)
+    anchor_rgb = images[anchor_start:start, ..., :3].float()
+    probe_rgb = output[:probe_count, ..., :3].float()
     reduce_dims = tuple(range(1, probe_rgb.ndim))
-    anchor_mean = float(anchor_rgb.mean())
+    anchor_luma = float(anchor_rgb.mean())
     means = probe_rgb.mean(dim=reduce_dims)
     deviations = probe_rgb.std(dim=reduce_dims, unbiased=False)
 
-    leading_flash = 0
-    for index in range(probe_count):
-        if (float(means[index]) >= 0.82
-                and float(deviations[index]) <= 0.30
-                and float(means[index]) - anchor_mean >= 0.20):
-            leading_flash += 1
+    # A decoded H3 seam can occasionally contain one or more nearly white
+    # frames. These frames have lost useful detail, so interpolate them from
+    # the last context frame to the first recovered frame.
+    white_count = 0
+    for index in range(min(4, probe_count - 1)):
+        if (float(means[index]) >= 0.78
+                and float(deviations[index]) <= 0.34
+                and float(means[index]) - anchor_luma >= 0.16):
+            white_count += 1
         else:
             break
-    if leading_flash < 1:
-        return output
-
-    recovery_mean = float(means[leading_flash])
-    flash_floor = float(means[:leading_flash].min())
-    if flash_floor - max(anchor_mean, recovery_mean) < 0.18:
-        return output
 
     repaired = output.clone()
-    anchor = images[start - 1:start].to(device=repaired.device, dtype=repaired.dtype)
-    recovery = output[leading_flash:leading_flash + 1]
-    for index in range(leading_flash):
-        alpha = float(index + 1) / float(leading_flash + 1)
-        repaired[index:index + 1] = torch.lerp(anchor, recovery, alpha)
+    if white_count:
+        recovery = output[white_count:white_count + 1]
+        anchor = images[start - 1:start].to(device=repaired.device, dtype=repaired.dtype)
+        for index in range(white_count):
+            alpha = float(index + 1) / float(white_count + 1)
+            repaired[index:index + 1] = torch.lerp(anchor, recovery, alpha)
+
+    # Ordinary continuation failures are often not white: the first generated
+    # frames keep their detail but jump in exposure. Smooth only the luminance
+    # offset over a short probe window, preserving texture, colour and length.
+    repaired_probe = repaired[:probe_count, ..., :3].float()
+    repaired_means = repaired_probe.mean(dim=reduce_dims)
+    reference_count = min(3, probe_count)
+    recovery_luma = float(repaired_means[-reference_count:].median())
+    first_luma = float(repaired_means[0])
+    if abs(first_luma - anchor_luma) < 0.035:
+        return repaired
+
+    rgb_channels = min(3, int(repaired.shape[-1]))
+    for index in range(probe_count):
+        progress = float(index + 1) / float(probe_count)
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        target_luma = anchor_luma + (recovery_luma - anchor_luma) * smooth
+        current_luma = float(repaired[index:index + 1, ..., :rgb_channels].float().mean())
+        correction = max(-0.20, min(0.20, target_luma - current_luma))
+        if abs(correction) < 1e-4:
+            continue
+        corrected = repaired[index:index + 1, ..., :rgb_channels].float().add(correction).clamp_(0.0, 1.0)
+        repaired[index:index + 1, ..., :rgb_channels] = corrected.to(repaired.dtype)
     return repaired
 
 
@@ -356,7 +378,7 @@ class XiantuVideoContinuationTrim:
         requested_keep = max(1, int(keep_frames))
         start = max(0, min(int(trim_frames), int(images.shape[0])))
         stop = min(int(images.shape[0]), start + requested_keep)
-        output_images = _repair_leading_white_flash(images, start, stop)
+        output_images = _repair_leading_seam(images, start, stop)
         if int(output_images.shape[0]) < requested_keep:
             last_frame = output_images[-1:] if int(output_images.shape[0]) else images[-1:]
             repeats = (requested_keep - int(output_images.shape[0]),) + (1,) * (last_frame.ndim - 1)
