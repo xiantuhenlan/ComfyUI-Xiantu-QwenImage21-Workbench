@@ -12,7 +12,7 @@ from comfy.nested_tensor import NestedTensor
 
 FPS = 24.0
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
-CONTEXT_FRAME_CHOICES = (5, 22, 39, 56)
+CONTEXT_FRAME_CHOICES = (22, 39, 56)
 PREFIX_STEPS_KEY = "_xiantu_video_continue_prefix_steps"
 SEAM_MIN_KEY = "_xiantu_video_continue_seam_min"
 TRIM_FRAMES_KEY = "_xiantu_video_continue_trim_frames"
@@ -52,61 +52,6 @@ def _resize_frames(frames, width, height):
     return resized[:, :, top:top + height, left:left + width].movedim(1, -1)
 
 
-def _repair_leading_seam(images, start, stop, max_probe=8):
-    """Suppress a white/bright pulse at a continuation cut without changing timing."""
-    output = images[start:stop]
-    frame_count = int(output.shape[0])
-    if start < 1 or frame_count < 2:
-        return output
-
-    probe_count = min(max(2, int(max_probe)), frame_count)
-    anchor_start = max(0, int(start) - 3)
-    anchor_rgb = images[anchor_start:start, ..., :3].float()
-    probe_rgb = output[:probe_count, ..., :3].float()
-    reduce_dims = tuple(range(1, probe_rgb.ndim))
-    anchor_luma = float(anchor_rgb.mean())
-    means = probe_rgb.mean(dim=reduce_dims)
-    deviations = probe_rgb.std(dim=reduce_dims, unbiased=False)
-
-    white_count = 0
-    for index in range(min(4, probe_count - 1)):
-        if (float(means[index]) >= 0.78
-                and float(deviations[index]) <= 0.34
-                and float(means[index]) - anchor_luma >= 0.16):
-            white_count += 1
-        else:
-            break
-
-    repaired = output.clone()
-    if white_count:
-        recovery = output[white_count:white_count + 1]
-        anchor = images[start - 1:start].to(device=repaired.device, dtype=repaired.dtype)
-        for index in range(white_count):
-            alpha = float(index + 1) / float(white_count + 1)
-            repaired[index:index + 1] = torch.lerp(anchor, recovery, alpha)
-
-    repaired_probe = repaired[:probe_count, ..., :3].float()
-    repaired_means = repaired_probe.mean(dim=reduce_dims)
-    reference_count = min(3, probe_count)
-    recovery_luma = float(repaired_means[-reference_count:].median())
-    first_luma = float(repaired_means[0])
-    if abs(first_luma - anchor_luma) < 0.035:
-        return repaired
-
-    rgb_channels = min(3, int(repaired.shape[-1]))
-    for index in range(probe_count):
-        progress = float(index + 1) / float(probe_count)
-        smooth = progress * progress * (3.0 - 2.0 * progress)
-        target_luma = anchor_luma + (recovery_luma - anchor_luma) * smooth
-        current_luma = float(repaired[index:index + 1, ..., :rgb_channels].float().mean())
-        correction = max(-0.20, min(0.20, target_luma - current_luma))
-        if abs(correction) < 1e-4:
-            continue
-        corrected = repaired[index:index + 1, ..., :rgb_channels].float().add(correction).clamp_(0.0, 1.0)
-        repaired[index:index + 1, ..., :rgb_channels] = corrected.to(repaired.dtype)
-    return repaired
-
-
 def _prefix_weights(prefix_steps, seam_min):
     taper = max(1, min(4, int(prefix_steps)))
     weights = torch.ones(int(prefix_steps), dtype=torch.float32)
@@ -114,32 +59,15 @@ def _prefix_weights(prefix_steps, seam_min):
     return weights
 
 
-def _encode_audio_tail(audio_vae, audio, seconds):
-    if audio_vae is None or not isinstance(audio, dict) or not torch.is_tensor(audio.get("waveform")):
-        return None
-    waveform = audio["waveform"]
-    if waveform.numel() < 1:
-        return None
-    source_rate = int(audio.get("sample_rate") or 32000)
-    target_rate = int(getattr(audio_vae, "audio_sample_rate", 32000) or 32000)
-    if source_rate != target_rate:
-        import torchaudio
-        waveform = torchaudio.functional.resample(waveform, source_rate, target_rate)
-    wanted = max(1, int(round(float(seconds) * target_rate)))
-    waveform = waveform[..., -wanted:]
-    return audio_vae.encode(waveform[:1].movedim(1, -1))
-
-
-def apply_latent_continue(latent, previous_frames, previous_audio, vae, audio_vae,
-                          requested_frames, redraw_amount, width, height, visible_frames):
+def apply_latent_continue(latent, previous_frames, vae, requested_frames,
+                          redraw_amount, width, height, visible_frames):
     if vae is None:
         raise ValueError("承接上一分镜需要连接视频 VAE。")
     available = int(previous_frames.shape[0])
-    requested = max(5, int(requested_frames or 22))
-    context_frames = next((value for value in reversed(CONTEXT_FRAME_CHOICES)
-                           if value <= min(requested, available)), 0)
-    if context_frames < 5:
-        raise ValueError("上一分镜输出不足 5 帧，无法建立动作上下文。")
+    requested = max(22, int(requested_frames or 22))
+    context_frames = min(CONTEXT_FRAME_CHOICES, key=lambda value: abs(value - requested))
+    if available < context_frames:
+        raise ValueError(f"上一分镜输出不足所选的 {context_frames} 帧，无法建立动作上下文。")
 
     streams = _streams(latent.get("samples"))
     if len(streams) != 2:
@@ -153,23 +81,15 @@ def apply_latent_continue(latent, previous_frames, previous_audio, vae, audio_va
 
     video = target_video.clone()
     video[:, :, :prefix_steps] = encoded[:, :, :prefix_steps].to(video)
+    # Continuation is visual only. The current shot generates its own complete
+    # soundtrack; no audio from the previous shot enters this latent.
     audio = target_audio.clone()
-    audio_steps = 0
-    encoded_audio = _encode_audio_tail(audio_vae, previous_audio, context_frames / FPS)
-    if torch.is_tensor(encoded_audio):
-        audio_steps = min(int(encoded_audio.shape[-1]), int(audio.shape[-1]))
-        audio[..., :audio_steps] = encoded_audio[..., -audio_steps:].to(audio)
 
     seam_min = max(0.0, min(0.95, float(redraw_amount if redraw_amount is not None else 0.10)))
     weights = _prefix_weights(prefix_steps, seam_min)
     video_mask = torch.ones((1, 1, int(video.shape[2]), int(video.shape[3]), int(video.shape[4])), device=video.device, dtype=torch.float32)
     video_mask[:, :, :prefix_steps] = weights.to(video.device).view(1, 1, prefix_steps, 1, 1)
     audio_mask = torch.ones((1, 1, 1, int(audio.shape[-1])), device=audio.device, dtype=torch.float32)
-    if audio_steps:
-        audio_mask[..., :audio_steps] = 0.0
-        release = min(8, audio_steps)
-        ticks = torch.arange(1, release + 1, device=audio.device, dtype=torch.float32)
-        audio_mask[..., audio_steps - release:audio_steps] = (0.5 - 0.5 * torch.cos(math.pi * ticks / release)).view(1, 1, 1, release)
 
     output = dict(latent)
     output["samples"] = _nested(video, audio)
@@ -372,11 +292,14 @@ class XiantuVideoContinuationTrim:
         requested_keep = max(1, int(keep_frames))
         start = max(0, min(int(trim_frames), int(images.shape[0])))
         stop = min(int(images.shape[0]), start + requested_keep)
-        output_images = _repair_leading_seam(images, start, stop)
+        # 精确硬裁剪：承接质量由首帧或所选的 22 帧以上 Latent 上下文负责。
+        # 裁剪后不再做亮度修复、叠化、插帧或任何画面混合。
+        output_images = images[start:stop]
         if int(output_images.shape[0]) < requested_keep:
-            last_frame = output_images[-1:] if int(output_images.shape[0]) else images[-1:]
-            repeats = (requested_keep - int(output_images.shape[0]),) + (1,) * (last_frame.ndim - 1)
-            output_images = torch.cat((output_images, last_frame.repeat(repeats)), dim=0)
+            raise ValueError(
+                f"生成视频只有 {int(images.shape[0])} 帧，裁掉 {start} 帧后不足要求的 {requested_keep} 帧；"
+                "已停止输出，避免复制末帧造成卡顿或重影。"
+            )
         output_audio = audio
         if isinstance(audio, dict) and torch.is_tensor(audio.get("waveform")):
             sample_rate = int(audio.get("sample_rate") or 32000)

@@ -533,7 +533,7 @@ function createWorkbench(node) {
         fps: 24,
     };
     let timelineScale = Math.max(20, Math.min(100, Number(initialState.timelineScale || 38)));
-    const continuityFrameChoices = [5, 22, 39, 56];
+    const continuityFrameChoices = [22, 39, 56];
     const snapContinuityFrames = (value) => continuityFrameChoices.reduce((best, item) => Math.abs(item - Number(value || 22)) < Math.abs(best - Number(value || 22)) ? item : best, 22);
     let continuityEnabled = initialState.continuityEnabled ?? initialState.continuity?.enabled ?? true;
     let continuityOverlapFrames = snapContinuityFrames(initialState.continuityOverlapFrames ?? initialState.continuity?.frames ?? 22);
@@ -2429,16 +2429,16 @@ function createWorkbench(node) {
             return Object.values(inputs).some((value) => Array.isArray(value) && value.length === 2 && dependsOn(value[0], targetId, seen));
         };
 
-        if (shot?.inheritPrevious) {
+        const usesContextContinuation = Boolean(shot?.inheritPrevious) && shot?.mode !== "frames";
+        if (usesContextContinuation) {
             let samplerCount = 0;
             for (const [samplerId, sampler] of Object.entries(nodes)) {
                 const samplerType = String(sampler?.class_type || "");
                 if (!dependsOn(samplerId, workbenchId)) continue;
                 if (samplerType === "SelfLiftH3Sampler") {
-                    // The workbench carries separate video/audio masks in a
-                    // NestedTensor. Keep SelfLift's own tiling switch untouched
-                    // and use the same native H3 guide + anchor restoration
-                    // continuation path in both SelfLift modes.
+                    // SelfLift rejects the workbench AV noise mask. Remove the
+                    // sampler-facing mask, but never blend the source latent
+                    // back after sampling: redraw context, then hard-trim it.
                     sampler.inputs ||= {};
                     const latentLink = sampler.inputs.latent_image;
                     if (!Array.isArray(latentLink)) continue;
@@ -2448,21 +2448,6 @@ function createWorkbench(node) {
                         inputs: { latent: latentLink, preserve_video_mask: false },
                     };
                     sampler.inputs.latent_image = [adapterId, 0];
-                    const blendId = allocateId();
-                    nodes[blendId] = {
-                        class_type: "XiantuSelfLiftContinuationBlend",
-                        inputs: { generated: [samplerId, 0], source: latentLink },
-                    };
-                    for (const [consumerId, consumer] of Object.entries(nodes)) {
-                        if (consumerId === blendId) continue;
-                        for (const [inputName, inputValue] of Object.entries(consumer?.inputs || {})) {
-                            if (Array.isArray(inputValue)
-                                && String(inputValue[0]) === String(samplerId)
-                                && Number(inputValue[1]) === 0) {
-                                consumer.inputs[inputName] = [blendId, 0];
-                            }
-                        }
-                    }
                     samplerCount += 1;
                     continue;
                 }
@@ -2505,7 +2490,7 @@ function createWorkbench(node) {
             const trimId = allocateId();
             const trimInputs = {
                 images: imageLink,
-                trim_frames: shot?.inheritPrevious ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0,
+                trim_frames: usesContextContinuation ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0,
                 keep_frames: targetOutputFrames(shot.seconds),
             };
             if (Array.isArray(target.inputs.audio)) trimInputs.audio = target.inputs.audio;
@@ -2759,8 +2744,9 @@ function createWorkbench(node) {
                 if (shot.inheritPrevious && !previousOutput?.filename) {
                     throw new Error(`${shot.title || `分镜 ${position + 1}`} 要承接上一分镜，但上一分镜还没有已保存的成功输出`);
                 }
-                shot.contextTrimFrames = shot.inheritPrevious ? continuityOverlapFrames : 0;
-                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? `重叠 ${shot.contextTrimFrames} 帧` : "不使用承接");
+                const usesContextContinuation = Boolean(shot.inheritPrevious) && shot.mode !== "frames";
+                shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
+                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取 ${shot.contextTrimFrames} 帧重绘并裁剪` : "取上一分镜最后一帧作为首帧") : "不使用承接");
                 const generationAssets = effectiveAssetsForShot(shot);
                 await reportPreparationStep(8, preparationSteps, "读取参考素材列表", `共 ${generationAssets.length} 个素材`);
                 for (let assetIndex = 0; assetIndex < generationAssets.length; assetIndex += 1) {
@@ -2782,7 +2768,7 @@ function createWorkbench(node) {
                 const graphPrompt = await app.graphToPrompt();
                 injectWorkflowSeed(graphPrompt, shotSeed);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
-                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? "采样重绘和上下文裁剪" : "无需承接，保持原工作流");
+                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧上下文重绘和精确裁剪` : "最后一帧首帧承接") : "无需承接，保持原工作流");
                 const continuityPrompt = injectContinuationPipeline(graphPrompt, shot);
                 await reportPreparationStep(15, preparationSteps, "安装人脸修复链路", faceRepairSettings.enabled ? "远景人脸修复已接入" : "人脸修复未开启");
                 const prompt = injectEncoderCompatibility(injectPostProcessingPipeline(continuityPrompt), generationResolution);

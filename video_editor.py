@@ -17,7 +17,7 @@ from comfy.nested_tensor import NestedTensor
 from comfy_extras.nodes_audio import LoadAudio
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageToVideo, MiniMaxH3ReferenceToVideo
 
-from .video_continuity import apply_latent_continue
+from .video_continuity import CONTEXT_FRAME_CHOICES, apply_latent_continue
 
 
 def _state(raw):
@@ -107,12 +107,12 @@ def _resize_video_frames(frames, width, height):
     return resized[:, :, top:top + height, left:left + width].movedim(1, -1)
 
 
-def _apply_visual_continuation(latent, previous_frames, previous_audio, vae, audio_vae,
-                               context_frames, redraw, width, height, visible_frames):
+def _apply_visual_continuation(latent, previous_frames, vae, context_frames,
+                               redraw, width, height, visible_frames):
     """Install the workbench-owned H3 latent prefix and sampling markers."""
     return apply_latent_continue(
-        latent, previous_frames, previous_audio, vae, audio_vae,
-        context_frames, redraw, width, height, visible_frames,
+        latent, previous_frames, vae, context_frames, redraw, width, height,
+        visible_frames,
     )
 
 
@@ -205,13 +205,17 @@ class XiantuVideoEditorWorkbench:
         fps = 24
         base_frames = max(5, round(max(1.0, float(shot.get("seconds") or 5)) * fps))
         visible_length = max(5, base_frames + (5 - base_frames % 17 + 17) % 17)
-        context_length = int(state.get("continuityOverlapFrames") or 22) if bool(shot.get("inheritPrevious")) else 0
+        mode = str(shot.get("mode") or "reference")
+        # 首尾帧承接只把上一分镜最后一帧作为本镜首帧；只有参考图、
+        # 全参考/多参考等模式才按所选的 22 帧以上上下文重绘并裁掉。
+        uses_context_continuation = bool(shot.get("inheritPrevious")) and mode != "frames"
+        requested_context = max(22, int(state.get("continuityOverlapFrames") or 22))
+        context_length = min(CONTEXT_FRAME_CHOICES, key=lambda value: abs(value - requested_context)) if uses_context_continuation else 0
         length = visible_length
         if context_length > 0:
             length = max(5, visible_length + context_length)
             while length % 17 != 5:
                 length += 1
-        mode = str(shot.get("mode") or "reference")
 
         assets = state.get("assets") if isinstance(state.get("assets"), list) else []
         effective = [item for item in assets if isinstance(item, dict) and (
@@ -232,28 +236,25 @@ class XiantuVideoEditorWorkbench:
             output_record = previous.get("lastOutput") if isinstance(previous, dict) else None
             if not isinstance(output_record, dict) or not output_record.get("filename"):
                 raise ValueError("当前分镜要求承接上一分镜，但上一分镜没有已保存的成功输出。")
-            frames, audio = _load_video(output_record)
+            frames, _audio = _load_video(output_record)
             previous_cache["frames"] = frames
-            previous_cache["audio"] = audio
             return frames
 
         def with_continuation(result_pair):
-            if not bool(shot.get("inheritPrevious")):
+            if not uses_context_continuation:
                 return result_pair
             positive, latent = result_pair
             frames = previous_video_frames()
             # Do not add an H3 keyframe here. Reference mode already carries
             # minimax_refs, while SelfLift's spatial tiler cannot combine a
             # full-size reference payload with a per-tile keyframe payload.
-            # Continuation is instead carried by the prefixed source latent,
-            # redraw strength, post-sampling anchor blend and exact trim path.
+            # Continuation is carried only by the prefixed source latent,
+            # redraw strength and exact hard-trim path.
             return positive, _apply_visual_continuation(
                 latent,
                 frames,
-                previous_cache.get("audio"),
                 vae,
-                audio_vae,
-                state.get("continuityOverlapFrames") or 22,
+                context_length,
                 state.get("continuityRedraw") if state.get("continuityRedraw") is not None else 0.10,
                 width,
                 height,
