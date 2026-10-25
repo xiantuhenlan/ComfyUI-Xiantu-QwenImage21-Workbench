@@ -952,3 +952,6 @@ app.registerExtension({
         requestAnimationFrame(() => root.__xq21Sync?.());
     },
 });
+
+// 供同插件内的图片素材工作台复用同一套 Qwen Image 2.1 功能、提示词与参考图规则。
+export { GROUPS as QWEN21_EDIT_GROUPS, T2I_GROUPS as QWEN21_TEXT_GROUPS, PRESETS as QWEN21_PRESETS, COMMON_NEGATIVE as QWEN21_COMMON_NEGATIVE };

@@ -839,6 +839,7 @@ function createWorkbench(node) {
         const mode = activeShot()?.mode || "reference";
         const typePrefix = `${activeAssetType}/`;
         const autoFirstFrame = mode === "frames" && Boolean(activeShot()?.inheritPrevious);
+        const autoImageFrame = mode === "image" && Boolean(activeShot()?.inheritPrevious);
         const modeLimit = mode === "image" ? 1 : mode === "frames" ? (autoFirstFrame ? 1 : 2) : Infinity;
         const allVisibleAssets = assetList.filter((asset) => {
             const belongsToShot = asset.shotId === activeShotId;
@@ -853,7 +854,11 @@ function createWorkbench(node) {
         input.accept = accept;
         const meta = document.createElement("div");
         meta.className = "xve-reference-meta";
-        meta.textContent = mode === "frames" ? (autoFirstFrame ? `首帧自动承接上一分镜 · 当前尾帧 ${visibleAssets.length}/1` : `当前分镜${title} ${visibleAssets.length}/2`) : `当前分镜${title} ${visibleAssets.length}${Number.isFinite(modeLimit) ? `/${modeLimit}` : " 个"}`;
+        meta.textContent = mode === "frames"
+            ? (autoFirstFrame ? `首帧自动承接上一分镜 · 当前尾帧 ${visibleAssets.length}/1` : `当前分镜${title} ${visibleAssets.length}/2`)
+            : autoImageFrame
+                ? `H3 自动承接上一分镜尾帧与多帧上下文 · 当前输入图 ${visibleAssets.length}/1（可选）`
+                : `当前分镜${title} ${visibleAssets.length}${Number.isFinite(modeLimit) ? `/${modeLimit}` : " 个"}`;
         assetsElement.appendChild(meta);
         visibleAssets.forEach((asset, assetIndex) => {
             const card = document.createElement("article");
@@ -913,7 +918,7 @@ function createWorkbench(node) {
             const hint = document.createElement("button");
             hint.type = "button";
             hint.className = "xve-reference-empty";
-            const uploadName = mode === "frames" ? (autoFirstFrame ? "尾帧" : (visibleAssets.length ? "尾帧" : "首帧")) : noun;
+            const uploadName = mode === "frames" ? (autoFirstFrame ? "尾帧" : (visibleAssets.length ? "尾帧" : "首帧")) : autoImageFrame ? "可选输入图" : noun;
             hint.innerHTML = `<b>＋ 点击上传${uploadName}</b><span>也可以把${uploadName}直接拖到这里</span>`;
             hint.onclick = () => input.click();
             assetsElement.appendChild(hint);
@@ -2437,8 +2442,11 @@ function createWorkbench(node) {
                 if (!dependsOn(samplerId, workbenchId)) continue;
                 if (samplerType === "SelfLiftH3Sampler") {
                     // SelfLift rejects the workbench AV noise mask. Remove the
-                    // sampler-facing mask, but never blend the source latent
-                    // back after sampling: redraw context, then hard-trim it.
+                    // sampler-facing mask, then restore the tapered continuation
+                    // anchor after sampling. The final anchored context frame is
+                    // kept by the trim stage as the next shot's visible first
+                    // frame, so SelfLift and the standard sampler share the same
+                    // seamless-boundary contract.
                     sampler.inputs ||= {};
                     const latentLink = sampler.inputs.latent_image;
                     if (!Array.isArray(latentLink)) continue;
@@ -2448,6 +2456,19 @@ function createWorkbench(node) {
                         inputs: { latent: latentLink, preserve_video_mask: false },
                     };
                     sampler.inputs.latent_image = [adapterId, 0];
+                    const blendId = allocateId();
+                    nodes[blendId] = {
+                        class_type: "XiantuSelfLiftContinuationBlend",
+                        inputs: { generated: [samplerId, 0], source: [workbenchId, 1] },
+                    };
+                    for (const [consumerId, consumer] of Object.entries(nodes)) {
+                        if (String(consumerId) === blendId || !consumer?.inputs) continue;
+                        for (const [inputName, value] of Object.entries(consumer.inputs)) {
+                            if (Array.isArray(value) && String(value[0]) === String(samplerId) && Number(value[1]) === 0) {
+                                consumer.inputs[inputName] = [blendId, 0];
+                            }
+                        }
+                    }
                     samplerCount += 1;
                     continue;
                 }
@@ -2484,13 +2505,17 @@ function createWorkbench(node) {
             if (!Array.isArray(imageLink)) continue;
             // A downstream encoder (for example the post-upscale VHS encoder)
             // may load the already trimmed upstream video. Never trim that same
-            // branch a second time, otherwise every continuation loses another
-            // contextTrimFrames block (192 - 22 = 170 frames at 24 FPS).
+            // branch a second time. For a continuation, keep the final context
+            // frame as the visible first frame: it is the anchor closest to the
+            // previous shot's tail. Trimming the entire 22/39/56-frame context
+            // starts after H3 has already changed composition and creates a hard
+            // cut at the concat boundary.
             if (trimIds.some((trimId) => dependsOn(String(imageLink[0]), trimId))) continue;
             const trimId = allocateId();
+            const contextFrames = usesContextContinuation ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0;
             const trimInputs = {
                 images: imageLink,
-                trim_frames: usesContextContinuation ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0,
+                trim_frames: contextFrames > 0 ? contextFrames - 1 : 0,
                 keep_frames: targetOutputFrames(shot.seconds),
             };
             if (Array.isArray(target.inputs.audio)) trimInputs.audio = target.inputs.audio;
@@ -2743,7 +2768,7 @@ function createWorkbench(node) {
                 }
                 const usesContextContinuation = Boolean(shot.inheritPrevious) && shot.mode !== "frames";
                 shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
-                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取 ${shot.contextTrimFrames} 帧重绘并裁剪` : "取上一分镜最后一帧作为首帧") : "不使用承接");
+                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取 ${shot.contextTrimFrames} 帧重绘，保留末帧作为承接首帧` : "取上一分镜最后一帧作为首帧") : "不使用承接");
                 const generationAssets = effectiveAssetsForShot(shot);
                 await reportPreparationStep(8, preparationSteps, "读取参考素材列表", `共 ${generationAssets.length} 个素材`);
                 for (let assetIndex = 0; assetIndex < generationAssets.length; assetIndex += 1) {
@@ -2765,7 +2790,7 @@ function createWorkbench(node) {
                 const graphPrompt = await app.graphToPrompt();
                 injectWorkflowSeed(graphPrompt, shotSeed);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
-                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧上下文重绘和精确裁剪` : "最后一帧首帧承接") : "无需承接，保持原工作流");
+                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧上下文重绘并保留末帧锚点` : "最后一帧首帧承接") : "无需承接，保持原工作流");
                 const continuityPrompt = injectContinuationPipeline(graphPrompt, shot);
                 await reportPreparationStep(15, preparationSteps, "安装人脸修复链路", faceRepairSettings.enabled ? "远景人脸修复已接入" : "人脸修复未开启");
                 const prompt = injectEncoderCompatibility(injectPostProcessingPipeline(continuityPrompt), generationResolution);

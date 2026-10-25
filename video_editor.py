@@ -263,7 +263,12 @@ class XiantuVideoEditorWorkbench:
 
         if mode in {"text", "image", "frames"}:
             auto_first_frame = mode == "frames" and bool(shot.get("inheritPrevious"))
-            first = previous_video_frames()[-1:] if auto_first_frame else (_load_image(images[0]) if mode in {"image", "frames"} and images else None)
+            # 图生视频开启承接后，如果当前分镜没有另外上传输入图，直接把
+            # 上一分镜的最后一帧作为 H3 ImageToVideo 首帧。后续仍会通过
+            # with_continuation 写入所选的 22/39/56 帧 Latent 上下文，避免
+            # 在真正进入 H3 续接前被“需要一张输入图片”的旧校验拦截。
+            auto_image_frame = mode == "image" and bool(shot.get("inheritPrevious")) and not images
+            first = previous_video_frames()[-1:] if (auto_first_frame or auto_image_frame) else (_load_image(images[0]) if mode in {"image", "frames"} and images else None)
             last = _load_image(images[-1]) if auto_first_frame and images else (_load_image(images[1]) if mode == "frames" and len(images) > 1 else None)
             if mode == "image" and first is None:
                 raise ValueError("图生视频需要一张输入图片。")

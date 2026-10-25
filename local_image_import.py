@@ -174,6 +174,30 @@ def _is_reparse(path: Path) -> bool:
         return False
 
 
+def _safe_asset_category_name(value: str) -> str:
+    name = str(value or "").strip()
+    if not name or len(name) > 60 or name in {".", ".."} or name.startswith(".") or any(char in name for char in '<>:"/\\|?*') or name.endswith((" ", ".")):
+        raise _AssetLibraryError("asset_category_name_invalid", "资产分类名称无效")
+    return name
+
+
+def _asset_categories(root: Path):
+    categories = dict(_ASSET_CATEGORIES)
+    if root.is_dir():
+        for path in root.iterdir():
+            if not path.is_dir() or path.is_symlink() or _is_reparse(path) or path.name in _ASSET_CATEGORIES.values():
+                continue
+            categories[f"custom:{path.name}"] = path.name
+    return categories
+
+
+def _asset_category_directory(root: Path, category: str) -> str:
+    directory = _asset_categories(root).get(str(category or ""))
+    if not directory:
+        raise _AssetLibraryError("asset_category_invalid", "未知资产分类")
+    return directory
+
+
 def _asset_root() -> Path:
     configured = str(os.environ.get("XIANTU_ASSET_LIBRARY_ROOT") or "").strip()
     candidates = [Path(configured)] if configured else []
@@ -211,10 +235,12 @@ def _asset_root() -> Path:
 
 def _ensure_asset_categories(root: Path, selection: str) -> None:
     categories = tuple(_ASSET_CATEGORIES) if selection == "all" else (selection,)
-    if any(category not in _ASSET_CATEGORIES for category in categories):
-        raise _AssetLibraryError("asset_category_invalid", "未知资产分类")
     for category in categories:
-        category_dir = root / _ASSET_CATEGORIES[category]
+        if category in _ASSET_CATEGORIES:
+            directory = _ASSET_CATEGORIES[category]
+        else:
+            directory = _asset_category_directory(root, category)
+        category_dir = root / directory
         try:
             category_dir.mkdir(exist_ok=True)
         except OSError as error:
@@ -233,14 +259,14 @@ def _utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _asset_relative(category, filename):
-    return f"{_ASSET_CATEGORIES[category]}/{filename}".replace("\\", "/")
+def _asset_relative(root: Path, category, filename):
+    return f"{_asset_category_directory(root, category)}/{filename}".replace("\\", "/")
 
 
 def _checked_asset_path(root: Path, relative_path: str, must_exist=True) -> Path:
     normalized = str(relative_path or "").replace("\\", "/")
     parts = Path(normalized).parts
-    if len(parts) != 2 or parts[0] not in _ASSET_CATEGORIES.values() or any(part in {"", ".", ".."} for part in parts):
+    if len(parts) != 2 or parts[0] not in _asset_categories(root).values() or any(part in {"", ".", ".."} for part in parts):
         raise _AssetLibraryError("asset_path_outside_root", "资产相对路径无效")
     parent = (root / parts[0]).resolve()
     try:
@@ -348,14 +374,15 @@ def _reconcile_asset_library(root: Path):
             indexed_by_hash.setdefault(content_hash, []).append(item)
     used_ids = set()
     assets = []
-    for category, directory in _ASSET_CATEGORIES.items():
+    category_map = _asset_categories(root)
+    for category, directory in category_map.items():
         category_root = root / directory
         if not category_root.is_dir() or category_root.is_symlink() or _is_reparse(category_root):
             continue
         for path in category_root.iterdir():
             if not path.is_file() or path.is_symlink() or _is_reparse(path):
                 continue
-            relative = _asset_relative(category, path.name)
+            relative = _asset_relative(root, category, path.name)
             content_hash = _sha256_file(path)
             prior = indexed_by_path.get(relative)
             if prior is None:
@@ -382,6 +409,7 @@ def _reconcile_asset_library(root: Path):
     return {
         "schemaVersion": 1,
         "root": str(root),
+        "categories": [{"id": category, "name": directory} for category, directory in category_map.items()],
         "assets": assets,
         "recoveredMetadata": recovered,
         "recoveryMessage": recovery_message,
@@ -427,6 +455,25 @@ async def list_common_assets(_request):
         return _asset_error(error)
 
 
+@PromptServer.instance.routes.post("/xiantu/video-editor/common-assets/categories")
+async def create_common_asset_category(request):
+    try:
+        payload = await request.json()
+        name = _safe_asset_category_name(payload.get("name"))
+        root = _asset_root()
+        existing = next(((category, directory) for category, directory in _asset_categories(root).items() if directory.casefold() == name.casefold()), None)
+        if existing:
+            return web.json_response({"ok": True, "category": {"id": existing[0], "name": existing[1]}})
+        destination = (root / name).resolve()
+        destination.relative_to(root)
+        destination.mkdir(exist_ok=False)
+        if destination.is_symlink() or _is_reparse(destination):
+            raise _AssetLibraryError("asset_category_create_failed", "资产分类目录不可用")
+        return web.json_response({"ok": True, "category": {"id": f"custom:{name}", "name": name}})
+    except Exception as error:
+        return _asset_error(error)
+
+
 @PromptServer.instance.routes.get("/xiantu/video-editor/common-assets/content")
 async def common_asset_content(request):
     try:
@@ -456,19 +503,20 @@ async def import_common_asset(request):
                 fields[field.name] = await field.text()
         if not file_bytes or len(file_bytes) > _MAX_COMMON_ASSET_BYTES:
             raise _AssetLibraryError("asset_import_invalid", "资产为空或超过 128 MiB")
-        category = fields["category"] if fields["category"] in _ASSET_CATEGORIES else "other"
         root = _asset_root()
-        scope = fields["library_scope"] if fields["library_scope"] in (*_ASSET_CATEGORIES, "all") else category
+        categories = _asset_categories(root)
+        category = fields["category"] if fields["category"] in categories else "other"
+        scope = fields["library_scope"] if fields["library_scope"] in (*categories, "all") else category
         _ensure_asset_categories(root, scope)
         with _asset_metadata_lock(root):
             snapshot = _reconcile_asset_library(root)
-            destination = _unique_asset_path(root / _ASSET_CATEGORIES[category], file_name)
+            destination = _unique_asset_path(root / _asset_category_directory(root, category), file_name)
             with destination.open("xb") as handle:
                 handle.write(file_bytes)
                 handle.flush()
                 os.fsync(handle.fileno())
             snapshot = _reconcile_asset_library(root)
-            relative = _asset_relative(category, destination.name)
+            relative = _asset_relative(root, category, destination.name)
             asset = next(item for item in snapshot["assets"] if item["relativePath"] == relative)
             asset["name"] = str(fields["name"] or "").strip()[:200] or destination.stem
             asset["note"] = str(fields["note"] or "").strip()[:2000]
@@ -488,13 +536,13 @@ async def update_common_asset(request):
             snapshot = _reconcile_asset_library(root)
             asset = _snapshot_asset(snapshot, payload.get("id"))
             new_category = str(payload.get("category") or asset["category"])
-            if new_category not in _ASSET_CATEGORIES:
+            if new_category not in _asset_categories(root):
                 raise _AssetLibraryError("asset_category_invalid", "未知资产分类")
             if new_category != asset["category"]:
                 source = _checked_asset_path(root, asset["relativePath"])
-                destination = _unique_asset_path(root / _ASSET_CATEGORIES[new_category], source.name)
+                destination = _unique_asset_path(root / _asset_category_directory(root, new_category), source.name)
                 os.replace(source, destination)
-                asset["relativePath"] = _asset_relative(new_category, destination.name)
+                asset["relativePath"] = _asset_relative(root, new_category, destination.name)
                 asset["category"] = new_category
             if "name" in payload:
                 name = str(payload.get("name") or "").strip()
@@ -712,6 +760,90 @@ def _sync_finalized_name_to_history(old_name: str, new_name: str, subfolder: str
 
     with mutex:
         visit(history)
+
+
+@PromptServer.instance.routes.post("/xiantu/image-workbench/rename-output")
+async def rename_image_output(request):
+    try:
+        payload = await request.json()
+        record = payload.get("record") if isinstance(payload, dict) else None
+        if not isinstance(record, dict) or str(record.get("type") or "output") != "output":
+            raise ValueError("只能改名输出目录中的图片")
+        output_root = Path(folder_paths.get_output_directory()).resolve()
+        old_name = Path(str(record.get("name") or record.get("filename") or "")).name
+        subfolder = str(record.get("subfolder") or "").replace("\\", "/").strip("/")
+        source = (output_root / subfolder / old_name).resolve()
+        source.relative_to(output_root)
+        if not source.is_file() or source.suffix.lower() not in _IMAGE_EXTENSIONS:
+            raise FileNotFoundError(old_name)
+        requested = Path(_safe_file_name(payload.get("name"))).name
+        if not Path(requested).suffix:
+            requested = f"{requested}{source.suffix.lower()}"
+        if Path(requested).suffix.lower() != source.suffix.lower():
+            raise ValueError("改名时不能修改图片格式")
+        destination = source.with_name(requested).resolve()
+        destination.relative_to(output_root)
+        if destination != source and destination.exists():
+            return _error("同目录已存在这个文件名", status=409)
+        if destination != source:
+            os.replace(source, destination)
+            _sync_finalized_name_to_history(old_name, destination.name, subfolder)
+        return web.json_response({"ok": True, "record": {"name": destination.name, "subfolder": subfolder, "type": "output"}})
+    except FileNotFoundError as error:
+        return _error(f"找不到输出图片：{error}", status=404)
+    except (ValueError, OSError) as error:
+        return _error(f"图片改名失败：{error}")
+
+
+@PromptServer.instance.routes.post("/xiantu/image-workbench/delete-outputs")
+async def delete_image_outputs(request):
+    try:
+        payload = await request.json()
+        records = payload.get("records") if isinstance(payload, dict) else None
+        if not isinstance(records, list) or not records or len(records) > 100:
+            raise ValueError("删除列表无效")
+        output_root = Path(folder_paths.get_output_directory()).resolve()
+        targets = {}
+        for record in records:
+            if not isinstance(record, dict) or str(record.get("type") or "output") != "output":
+                raise ValueError("只能删除输出目录中的图片")
+            name = Path(str(record.get("name") or record.get("filename") or "")).name
+            subfolder = str(record.get("subfolder") or "").replace("\\", "/").strip("/")
+            target = (output_root / subfolder / name).resolve()
+            target.relative_to(output_root)
+            if not name or target.suffix.lower() not in _IMAGE_EXTENSIONS:
+                raise ValueError("输出图片路径无效")
+            if target.exists() and (not target.is_file() or target.is_symlink() or _is_reparse(target)):
+                raise ValueError("拒绝删除链接或非普通文件")
+            targets[(subfolder, name)] = target
+        deleted = []
+        missing = []
+        for (subfolder, name), target in targets.items():
+            if target.is_file():
+                target.unlink()
+                deleted.append({"name": name, "subfolder": subfolder, "type": "output"})
+            else:
+                missing.append({"name": name, "subfolder": subfolder, "type": "output"})
+        queue = getattr(PromptServer.instance, "prompt_queue", None)
+        history = getattr(queue, "history", None)
+        mutex = getattr(queue, "mutex", None)
+        if isinstance(history, dict) and mutex is not None:
+            keys = set(targets)
+            def matches(value):
+                return isinstance(value, dict) and (str(value.get("subfolder") or "").replace("\\", "/").strip("/"), str(value.get("filename") or value.get("name") or "")) in keys
+            def scrub(value):
+                if isinstance(value, dict):
+                    for child in value.values():
+                        scrub(child)
+                elif isinstance(value, list):
+                    value[:] = [child for child in value if not matches(child)]
+                    for child in value:
+                        scrub(child)
+            with mutex:
+                scrub(history)
+        return web.json_response({"ok": True, "deleted": deleted, "missing": missing})
+    except (ValueError, OSError) as error:
+        return _error(f"删除输出图片失败：{error}")
 
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/finalize-video-name")
@@ -961,7 +1093,14 @@ async def video_editor_merge(request):
             for path in paths:
                 handle.write("file '" + str(path).replace("'", "'\\''") + "'\n")
         completed = subprocess.run(
-            [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(target)],
+            [
+                ffmpeg, "-y", "-fflags", "+genpts", "-f", "concat", "-safe", "0",
+                "-i", str(list_file), "-map", "0:v:0", "-map", "0:a?",
+                "-vf", "fps=24", "-c:v", "libx264", "-preset", "medium",
+                "-crf", "19", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-ar", "48000", "-movflags", "+faststart", "-avoid_negative_ts",
+                "make_zero", str(target),
+            ],
             capture_output=True, text=True, timeout=3600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
         )
         if completed.returncode != 0:
