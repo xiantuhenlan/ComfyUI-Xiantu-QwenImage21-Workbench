@@ -2097,10 +2097,10 @@ function createWorkbench(node) {
     q("[data-monitor-hardware]").onchange = (event) => { cleanupSettings.monitorHardware = event.target.checked; syncHardwareMonitor(); save(); };
     syncHardwareMonitor();
     syncGenerationClock();
-    const cleanupResources = async () => {
-        if (!cleanupSettings.cache && !cleanupSettings.vram && !cleanupSettings.models) return;
+    const cleanupResources = async (settings = cleanupSettings) => {
+        if (!settings.cache && !settings.vram && !settings.models) return;
         try {
-            const response = await api.fetchApi("/xiantu/video-editor/cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cleanupSettings) });
+            const response = await api.fetchApi("/xiantu/video-editor/cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok || payload.warnings?.length) console.warn("视频导演台分镜间资源卸载警告（继续后续分镜）", payload.error || payload.warnings || response.status);
         } catch (error) {
@@ -2521,14 +2521,18 @@ function createWorkbench(node) {
             const inputs = nodes[nodeId]?.inputs || {};
             return Object.values(inputs).some((value) => Array.isArray(value) && value.length === 2 && dependsOn(value[0], targetId, seen));
         };
-        const afterTargets = Object.entries(nodes).filter(([targetId, target]) => {
+        const saveTargetsForOutput = (outputIndex) => Object.entries(nodes).filter(([targetId, target]) => {
             const classType = String(target?.class_type || "");
             if (!/(?:CreateVideo|VHS_VideoCombine|SaveVideo|VideoCombine)/i.test(classType) || !dependsOn(targetId, workbenchId)) return false;
-            return Object.values(target.inputs || {}).some((value) => Array.isArray(value) && String(value[0]) === workbenchId && Number(value[1]) === 3);
+            if (!Array.isArray(target.inputs?.images)) return false;
+            return Object.values(target.inputs || {}).some((value) => Array.isArray(value) && String(value[0]) === workbenchId && Number(value[1]) === outputIndex);
         });
-        if (!afterTargets.length) throw new Error("已启用视频修复，但没有找到连接“H3放大后文件名”的保存节点");
+        const afterTargets = saveTargetsForOutput(3);
+        const beforeTargets = saveTargetsForOutput(2);
+        const repairTargets = afterTargets.length ? afterTargets : beforeTargets;
+        if (!repairTargets.length) throw new Error("已启用视频修复，但没有找到连接导演台的可用视频保存节点");
         let installed = 0;
-        for (const [, target] of afterTargets) {
+        for (const [, target] of repairTargets) {
             let imageLink = target.inputs?.images;
             if (!Array.isArray(imageLink)) continue;
             if (faceRepairSettings.enabled) {
@@ -2543,7 +2547,7 @@ function createWorkbench(node) {
             target.inputs.images = imageLink;
             installed += 1;
         }
-        if (!installed) throw new Error("放大后保存节点没有图像输入，无法执行视频修复");
+        if (!installed) throw new Error("视频保存节点没有图像输入，无法执行视频修复");
         return prompt;
     };
     const injectEncoderCompatibility = (prompt, sourceResolution) => {
@@ -2702,14 +2706,7 @@ function createWorkbench(node) {
         updatePrompt();
         const originalShotId = activeShotId;
         const selected = shots.filter((shot) => shot.selected);
-        const activeIndex = Math.max(0, shots.findIndex((shot) => shot.id === activeShotId));
-        // A lone active check is the normal per-shot navigation state, not an
-        // instruction to stop the director after one shot. Keep explicit
-        // multi-shot selections, otherwise continue sequentially from the
-        // current shot through the remainder of the storyboard.
-        const jobs = selected.length > 1 || (selected.length === 1 && selected[0].id !== activeShotId)
-            ? selected
-            : shots.slice(activeIndex);
+        const jobs = selected.length ? selected : [activeShot()];
         const button = q("[data-generate]");
         runtime.busy = true;
         runtime.cancelRequested = false;
@@ -2836,6 +2833,8 @@ function createWorkbench(node) {
                 runtime.buttonText = "▶ 继续生成";
                 button.textContent = runtime.buttonText;
                 button.title = "";
+                setGenerationProgress({ title: "已停止，正在卸载", actionDetail: "模型、显存和缓存", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "load", phasePercent: null });
+                await cleanupResources({ cache: true, vram: true, models: true });
                 setGenerationProgress({ title: "已停止", actionDetail: "", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "prepare", phasePercent: 0 });
             } else {
                 if (failedShot && failedShot.status !== "done") failedShot.status = "error";
