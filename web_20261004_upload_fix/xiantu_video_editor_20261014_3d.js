@@ -329,8 +329,7 @@ function createWorkbench(node) {
                   <div class="xve-generate-tools">
                     <label class="xve-filename-prefix"><span>保存文件名</span><input type="text" maxlength="80" placeholder="留空按分镜名；例：天华 或 /西游记/天华" data-filename-prefix></label>
                     <label class="xve-check xve-continuity-toggle"><input type="checkbox" data-cascade checked><span></span>承接上一视频尾帧</label>
-                    <label class="xve-continuity-field" data-continuity-setting>上下文帧数<select data-continuity-frames><option value="5">5帧</option><option value="22" selected>22帧</option><option value="39">39帧</option><option value="56">56帧</option></select></label>
-                    <label class="xve-continuity-field xve-redraw-field" data-continuity-setting data-redraw-field>重绘强度<input type="number" min="0" max="0.95" step="0.05" value="0.10" data-continuity-redraw></label>
+                    <label class="xve-continuity-field" data-continuity-setting>上下文帧数<select data-continuity-frames><option value="22" selected>22帧</option><option value="39">39帧</option><option value="56">56帧</option></select></label>
                     <label class="xve-seconds">秒数 <input type="number" min="1" step="1" value="5" data-seconds></label>
                     <button type="button" class="xve-generate small" data-generate>▶ 开始生成</button>
                   </div>
@@ -538,7 +537,6 @@ function createWorkbench(node) {
     let continuityEnabled = initialState.continuityEnabled ?? initialState.continuity?.enabled ?? true;
     let continuityOverlapFrames = snapContinuityFrames(initialState.continuityOverlapFrames ?? initialState.continuity?.frames ?? 22);
     const continuityMode = "continue";
-    let continuityRedraw = Math.max(0, Math.min(0.95, Number(initialState.continuityRedraw ?? initialState.continuity?.redraw ?? 0.10)));
     const cleanupSettings = {
         cache: Boolean(initialState.cleanupSettings?.cache),
         vram: Boolean(initialState.cleanupSettings?.vram),
@@ -738,7 +736,6 @@ function createWorkbench(node) {
             continuityEnabled,
             continuityOverlapFrames,
             continuityMode,
-            continuityRedraw,
             cleanupSettings: { ...cleanupSettings },
             faceRepair: structuredClone(faceRepairSettings),
             generationProgress: { ...generationProgress },
@@ -787,9 +784,7 @@ function createWorkbench(node) {
         q("[data-cascade]").checked = Boolean(continuityEnabled);
         q("[data-cascade]").disabled = firstShot;
         q("[data-continuity-frames]").value = String(continuityOverlapFrames);
-        q("[data-continuity-redraw]").value = continuityRedraw.toFixed(2);
         q("[data-continuity-frames]").disabled = !continuityEnabled;
-        q("[data-continuity-redraw]").disabled = !continuityEnabled;
         root.querySelectorAll("[data-continuity-setting]").forEach((field) => { field.hidden = firstShot || !continuityEnabled; });
     };
     const renderShots = () => {
@@ -1814,7 +1809,6 @@ function createWorkbench(node) {
         syncContinuityUI(); syncModeUI(); save();
     };
     q("[data-continuity-frames]").onchange = (event) => { continuityOverlapFrames = snapContinuityFrames(event.target.value); syncContinuityUI(); save(); };
-    q("[data-continuity-redraw]").onchange = (event) => { continuityRedraw = Math.max(0, Math.min(0.95, Number(event.target.value) || 0)); syncContinuityUI(); save(); };
     q("[data-seconds]").onchange = updatePrompt;
     q("[data-video-aspect]").onchange = (event) => {
         resolutionState.aspect = resolutionRatios[event.target.value] ? event.target.value : "16:9";
@@ -2435,59 +2429,9 @@ function createWorkbench(node) {
         };
 
         const usesContextContinuation = Boolean(shot?.inheritPrevious) && shot?.mode !== "frames";
-        if (usesContextContinuation) {
-            let samplerCount = 0;
-            for (const [samplerId, sampler] of Object.entries(nodes)) {
-                const samplerType = String(sampler?.class_type || "");
-                if (!dependsOn(samplerId, workbenchId)) continue;
-                if (samplerType === "SelfLiftH3Sampler") {
-                    // SelfLift rejects the workbench AV noise mask. Remove the
-                    // sampler-facing mask, then restore the tapered continuation
-                    // anchor after sampling. The final anchored context frame is
-                    // kept by the trim stage as the next shot's visible first
-                    // frame, so SelfLift and the standard sampler share the same
-                    // seamless-boundary contract.
-                    sampler.inputs ||= {};
-                    const latentLink = sampler.inputs.latent_image;
-                    if (!Array.isArray(latentLink)) continue;
-                    const adapterId = allocateId();
-                    nodes[adapterId] = {
-                        class_type: "XiantuSelfLiftContinuationLatent",
-                        inputs: { latent: latentLink, preserve_video_mask: false },
-                    };
-                    sampler.inputs.latent_image = [adapterId, 0];
-                    const blendId = allocateId();
-                    nodes[blendId] = {
-                        class_type: "XiantuSelfLiftContinuationBlend",
-                        inputs: { generated: [samplerId, 0], source: [workbenchId, 1] },
-                    };
-                    for (const [consumerId, consumer] of Object.entries(nodes)) {
-                        if (String(consumerId) === blendId || !consumer?.inputs) continue;
-                        for (const [inputName, value] of Object.entries(consumer.inputs)) {
-                            if (Array.isArray(value) && String(value[0]) === String(samplerId) && Number(value[1]) === 0) {
-                                consumer.inputs[inputName] = [blendId, 0];
-                            }
-                        }
-                    }
-                    samplerCount += 1;
-                    continue;
-                }
-                if (samplerType !== "SamplerCustomAdvanced") continue;
-                const guiderLink = sampler.inputs?.guider;
-                const sigmaLink = sampler.inputs?.sigmas;
-                if (!Array.isArray(guiderLink) || !Array.isArray(sigmaLink)) continue;
-                const guider = nodes[String(guiderLink[0])];
-                if (!guider?.inputs || !Array.isArray(guider.inputs.model)) continue;
-                const patchId = allocateId();
-                nodes[patchId] = {
-                    class_type: "XiantuVideoContinuationModelPatch",
-                    inputs: { model: guider.inputs.model, latent: [workbenchId, 1], sigmas: sigmaLink },
-                };
-                guider.inputs.model = [patchId, 0];
-                samplerCount += 1;
-            }
-            if (!samplerCount) throw new Error("承接已开启，但没有找到连接到本工作台且支持动态重绘的 H3 采样器");
-        }
+        // The workbench now writes the previous shot into native H3 interior
+        // keyframes. Both the stock sampler and SelfLift consume that same
+        // conditioning, so no sampler-specific adapter node is injected here.
 
         let trimCount = 0;
         const trimIds = [];
@@ -2505,17 +2449,14 @@ function createWorkbench(node) {
             if (!Array.isArray(imageLink)) continue;
             // A downstream encoder (for example the post-upscale VHS encoder)
             // may load the already trimmed upstream video. Never trim that same
-            // branch a second time. For a continuation, keep the final context
-            // frame as the visible first frame: it is the anchor closest to the
-            // previous shot's tail. Trimming the entire 22/39/56-frame context
-            // starts after H3 has already changed composition and creates a hard
-            // cut at the concat boundary.
+            // branch a second time. Native H3 context occupies the complete
+            // 22/39/56-frame prefix, so remove that complete prefix once.
             if (trimIds.some((trimId) => dependsOn(String(imageLink[0]), trimId))) continue;
             const trimId = allocateId();
             const contextFrames = usesContextContinuation ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0;
             const trimInputs = {
                 images: imageLink,
-                trim_frames: contextFrames > 0 ? contextFrames - 1 : 0,
+                trim_frames: contextFrames > 0 ? contextFrames : 0,
                 keep_frames: targetOutputFrames(shot.seconds),
             };
             if (Array.isArray(target.inputs.audio)) trimInputs.audio = target.inputs.audio;
@@ -2768,7 +2709,7 @@ function createWorkbench(node) {
                 }
                 const usesContextContinuation = Boolean(shot.inheritPrevious) && shot.mode !== "frames";
                 shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
-                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取 ${shot.contextTrimFrames} 帧重绘，保留末帧作为承接首帧` : "取上一分镜最后一帧作为首帧") : "不使用承接");
+                await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取上一分镜末尾 ${shot.contextTrimFrames} 帧作为 H3 原生上下文` : "取上一分镜最后一帧作为首帧") : "不使用承接");
                 const generationAssets = effectiveAssetsForShot(shot);
                 await reportPreparationStep(8, preparationSteps, "读取参考素材列表", `共 ${generationAssets.length} 个素材`);
                 for (let assetIndex = 0; assetIndex < generationAssets.length; assetIndex += 1) {
@@ -2790,7 +2731,7 @@ function createWorkbench(node) {
                 const graphPrompt = await app.graphToPrompt();
                 injectWorkflowSeed(graphPrompt, shotSeed);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
-                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧上下文重绘并保留末帧锚点` : "最后一帧首帧承接") : "无需承接，保持原工作流");
+                await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧 H3 原生上下文承接` : "最后一帧首帧承接") : "无需承接，保持原工作流");
                 const continuityPrompt = injectContinuationPipeline(graphPrompt, shot);
                 await reportPreparationStep(15, preparationSteps, "安装人脸修复链路", faceRepairSettings.enabled ? "远景人脸修复已接入" : "人脸修复未开启");
                 const prompt = injectEncoderCompatibility(injectPostProcessingPipeline(continuityPrompt), generationResolution);

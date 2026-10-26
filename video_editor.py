@@ -17,7 +17,8 @@ from comfy.nested_tensor import NestedTensor
 from comfy_extras.nodes_audio import LoadAudio
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageToVideo, MiniMaxH3ReferenceToVideo
 
-from .video_continuity import CONTEXT_FRAME_CHOICES, apply_latent_continue
+from .h3_context_compat import apply_motion_context
+from .video_continuity import CONTEXT_FRAME_CHOICES
 
 
 def _state(raw):
@@ -107,12 +108,19 @@ def _resize_video_frames(frames, width, height):
     return resized[:, :, top:top + height, left:left + width].movedim(1, -1)
 
 
-def _apply_visual_continuation(latent, previous_frames, vae, context_frames,
-                               redraw, width, height, visible_frames):
-    """Install the workbench-owned H3 latent prefix and sampling markers."""
-    return apply_latent_continue(
-        latent, previous_frames, vae, context_frames, redraw, width, height,
-        visible_frames,
+def _apply_visual_continuation(positive, latent, previous_frames, vae,
+                               context_frames, width, height,
+                               shift_first_anchor=False):
+    """Carry the previous shot through native H3 conditioning keyframes."""
+    return apply_motion_context(
+        positive,
+        latent,
+        previous_frames,
+        vae,
+        context_frames,
+        width,
+        height,
+        shift_first_anchor,
     )
 
 
@@ -207,7 +215,7 @@ class XiantuVideoEditorWorkbench:
         visible_length = max(5, base_frames + (5 - base_frames % 17 + 17) % 17)
         mode = str(shot.get("mode") or "reference")
         # 首尾帧承接只把上一分镜最后一帧作为本镜首帧；只有参考图、
-        # 全参考/多参考等模式才按所选的 22 帧以上上下文重绘并裁掉。
+        # 全参考/多参考等模式按所选的 22/39/56 帧写入 H3 原生上下文并裁掉。
         uses_context_continuation = bool(shot.get("inheritPrevious")) and mode != "frames"
         requested_context = max(22, int(state.get("continuityOverlapFrames") or 22))
         context_length = min(CONTEXT_FRAME_CHOICES, key=lambda value: abs(value - requested_context)) if uses_context_continuation else 0
@@ -245,20 +253,18 @@ class XiantuVideoEditorWorkbench:
                 return result_pair
             positive, latent = result_pair
             frames = previous_video_frames()
-            # Do not add an H3 keyframe here. Reference mode already carries
-            # minimax_refs, while SelfLift's spatial tiler cannot combine a
-            # full-size reference payload with a per-tile keyframe payload.
-            # Continuation is carried only by the prefixed source latent,
-            # redraw strength and exact hard-trim path.
-            return positive, _apply_visual_continuation(
+            # Native H3 interior keyframes are understood by both the stock
+            # sampler and SelfLift. SelfLift's high-resolution tiler crops this
+            # payload per tile, avoiding the unsupported NestedTensor mask.
+            return _apply_visual_continuation(
+                positive,
                 latent,
                 frames,
                 vae,
                 context_length,
-                state.get("continuityRedraw") if state.get("continuityRedraw") is not None else 0.10,
                 width,
                 height,
-                visible_length,
+                mode == "image" and bool(images),
             )
 
         if mode in {"text", "image", "frames"}:
