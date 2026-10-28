@@ -863,7 +863,7 @@ const kreaLoraEnabled = (role, context) => {
         || (role === "cg_game" && context.kreaEditOption === "cg_game");
 };
 
-const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory = false, resetQwenLoras = false, syncProtocolNodes = false) => {
+const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory = false, resetQwenLoras = false) => {
     const graph = controllerNode?.graph;
     if (!graph || controllerNode.__xiawApplyingModelGroups) return false;
     const controllerClass = String(controllerNode?.comfyClass || controllerNode?.type || "");
@@ -871,7 +871,6 @@ const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory =
     if (standaloneProfile) {
         requestedProfile = standaloneProfile;
         resetQwenLoras = true;
-        syncProtocolNodes = false;
     }
     const groups = Array.isArray(graph._groups) ? graph._groups : [];
     const titleOf = (group) => String(group?.title || "").toLowerCase();
@@ -896,10 +895,8 @@ const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory =
         const loraRole = profile === "Qwen Image 2.1" ? qwenLoraRoleForNode(graphNode, groups) : "";
         let nextMode;
         if (resetQwenLoras) {
-            // 功能切换只控制对应 LoRA（以及 Krea Edit Patch），不触碰 Latent、VAE、采样器等核心节点。
-            if (syncProtocolNodes && activeProfile === "Krea-2" && nodeType === "Krea2EditModelPatch") {
-                nextMode = qwenContext.imageMode ? alwaysMode : bypassMode;
-            } else if (activeProfile === "Krea-2" && kreaLoraRole) {
+            // 功能切换只控制对应 LoRA，不触碰任何普通工作流节点。
+            if (activeProfile === "Krea-2" && kreaLoraRole) {
                 nextMode = kreaLoraRole === "common_detail" || kreaLoraEnabled(kreaLoraRole, qwenContext) ? alwaysMode : bypassMode;
             } else if (activeProfile === "Krea-2" && profile === "Krea-2" && nodeType.toLowerCase().includes("lora")) {
                 nextMode = bypassMode;
@@ -914,7 +911,6 @@ const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory =
         } else {
             // 模型切换才启用/忽略整个 MOSS、Qwen、Krea 主链。
             nextMode = profile === activeProfile ? alwaysMode : bypassMode;
-            if (activeProfile === "Krea-2" && nodeType === "Krea2EditModelPatch") nextMode = qwenContext.imageMode ? alwaysMode : bypassMode;
             if (activeProfile === "Krea-2" && kreaLoraRole) {
                 if (kreaLoraRole === "common_detail") nextMode = alwaysMode;
                 else nextMode = graphNode.mode;
@@ -1908,7 +1904,7 @@ function createWorkbench(node) {
     qa("[data-generation-choice]").forEach((button) => button.onclick = () => {
         state.generationMode = button.dataset.generationChoice;
         renderMode(); syncFields(); applyNodeProtocol(node, state); save();
-        applyModelGroupSwitch(node, state.modelProfile, true, true, true);
+        applyModelGroupSwitch(node, state.modelProfile, true, true);
     });
     q("[data-model-profile]").onchange = (event) => { if (fixedProfile) return; state.modelProfile = event.target.value; activeImage().style = "general"; activeImage().mossPreset = "general_free"; mossGroup = "general"; enforceCapabilities(); renderMode(); syncFields(); applyNodeProtocol(node, state); save(); applyModelGroupSwitch(node, state.modelProfile, true); };
     q("[data-reference-upload]").onclick = () => { pendingReferenceRole = ""; q("[data-reference-files]").click(); };
