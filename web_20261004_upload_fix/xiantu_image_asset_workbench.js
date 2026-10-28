@@ -585,7 +585,28 @@ function orderQwenReferences(preset, references = []) {
 const qwen21EditPrompt = (image) => {
     const preset = QWEN21_EDIT_PRESET_MAP.get(image?.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit");
     const option = qwen21Option(preset, image?.qwenEditOption);
-    return [preset?.prompt || "", option?.[2] || "", qwen21ReferenceRules(preset, image?.referenceImages)].filter(Boolean).join(" ");
+    let prompt = preset?.prompt || "";
+    if (preset?.id === "multi_person") {
+        const ordered = orderQwenReferences(preset, image?.referenceImages || []);
+        const tokenFor = (slotKey) => {
+            const index = ordered.findIndex((record) => record.slotKey === slotKey);
+            return index >= 0 ? `<image${index + 1}>` : "";
+        };
+        const person1 = tokenFor("person1") || "<image1>";
+        const person2 = tokenFor("person2") || "<image2>";
+        const scene = tokenFor("scene");
+        const composition = tokenFor("composition");
+        prompt = [
+            `生成一张同时包含且仅包含两个完整、彼此分离人物的合成画面。${person1} 只负责人物 1 的身份与外观，${person2} 只负责人物 2 的身份与外观。`,
+            "两人必须同时清晰可见，拥有各自独立的头部、脸、身体、四肢、发型、服装和配饰。严格逐人保持各自的脸型、五官、肤色、发型、发色、体型、服装款式、颜色和材质；禁止把两人的五官、头发、服装、身体或配色平均、互换、拼接或融合成一个人。",
+            scene ? `${scene} 只作为目标场景，不复制其中的人物、身份或服装。` : "",
+            composition
+                ? `严格按照 ${composition} 中的人物位置、左右关系、前后层次、朝向、距离、姿势和动作安排两人；不得强制默认左右站位，也不得复制该参考中人物的身份和外观。`
+                : "未提供人物站位与动作参考，采用自然分离、互不遮挡的默认双人构图。",
+            "统一两人的真实尺度、地面透视、景深、环境光、接触阴影和合理遮挡，但身份信息始终互不串用。最终画面必须明确呈现两名不同人物，而不是单人、双头人、重叠人或融合角色。",
+        ].filter(Boolean).join(" ");
+    }
+    return [prompt, option?.[2] || "", qwen21ReferenceRules(preset, image?.referenceImages)].filter(Boolean).join(" ");
 };
 const qwen21TextPrompt = (image) => {
     const preset = QWEN21_TEXT_PRESET_MAP.get(image?.qwenTextPreset) || QWEN21_TEXT_PRESET_MAP.get("text_to_image");
@@ -600,7 +621,7 @@ const krea2EditPrompt = (image) => {
 const krea2DemoPrompt = (image) => KREA2_EDIT_PRESET_MAP.get(image?.kreaEditPreset)?.demo || KREA2_TEXT_PRESET.demo;
 
 {
-  const href = new URL("./xiantu_image_asset_workbench.css?v=20261027-2", import.meta.url).href;
+  const href = new URL("./xiantu_image_asset_workbench.css?v=20261028-4", import.meta.url).href;
     let link = document.querySelector("link[data-xiaw-style]");
     if (!link) {
         link = document.createElement("link");
@@ -614,11 +635,36 @@ const krea2DemoPrompt = (image) => KREA2_EDIT_PRESET_MAP.get(image?.kreaEditPres
 const normalizeState = (raw, projectName) => {
     let state = {};
     try { state = JSON.parse(String(raw || "{}")); } catch {}
+    const profileNames = ["MOSS", "Qwen Image 2.1", "Krea-2"];
+    const rawProfile = profileNames.includes(state.modelProfile) ? state.modelProfile : (["KR2", "Krea2", "KR2 / Krea2"].includes(state.modelProfile) ? "Krea-2" : "MOSS");
     const shots = Array.isArray(state.shots) && state.shots.length ? state.shots : [{ id: makeId(), title: "分镜 1" }];
     const normalizeImage = (image, index, legacy = {}) => {
         let lastOutput = image?.lastOutput && typeof image.lastOutput === "object" ? { ...image.lastOutput } : legacy.lastOutput && typeof legacy.lastOutput === "object" ? { ...legacy.lastOutput } : null;
         const outputs = Array.isArray(image?.outputs) ? image.outputs.filter((item) => item && typeof item === "object").slice(-10).map((item) => ({ ...item })) : lastOutput ? [lastOutput] : [];
         lastOutput ||= outputs.at(-1) || null;
+        const normalizeOutputBucket = (bucket = {}) => {
+            const bucketLastOutput = bucket?.lastOutput && typeof bucket.lastOutput === "object" ? { ...bucket.lastOutput } : null;
+            const bucketOutputs = Array.isArray(bucket?.outputs) ? bucket.outputs.filter((item) => item && typeof item === "object").slice(-10).map((item) => ({ ...item })) : bucketLastOutput ? [bucketLastOutput] : [];
+            return {
+                outputs: bucketOutputs,
+                deletedOutputs: Array.isArray(bucket?.deletedOutputs) ? bucket.deletedOutputs.map(String).filter(Boolean).slice(-100) : [],
+                lastPromptId: String(bucket?.lastPromptId || ""),
+                lastOutput: bucketLastOutput || bucketOutputs.at(-1) || null,
+            };
+        };
+        const outputProfiles = Object.fromEntries(profileNames.map((profile) => [profile, normalizeOutputBucket(image?.outputProfiles?.[profile])]));
+        if (!image?.outputProfiles || typeof image.outputProfiles !== "object") {
+            for (const output of outputs) {
+                const outputPath = `${output.subfolder || ""}/${output.name || output.filename || ""}`.toLowerCase();
+                const profile = outputPath.includes("krea2_identity_edit") ? "Krea-2" : outputPath.includes("moss-image") ? "MOSS" : outputPath.includes("qwen21") ? "Qwen Image 2.1" : rawProfile;
+                if (!outputProfiles[profile].outputs.some((item) => fileRecordKey(item) === fileRecordKey(output))) outputProfiles[profile].outputs.push({ ...output });
+                outputProfiles[profile].outputs = outputProfiles[profile].outputs.slice(-10);
+            }
+            const lastProfile = lastOutput ? (`${lastOutput.subfolder || ""}/${lastOutput.name || lastOutput.filename || ""}`.toLowerCase().includes("krea2_identity_edit") ? "Krea-2" : `${lastOutput.subfolder || ""}/${lastOutput.name || lastOutput.filename || ""}`.toLowerCase().includes("moss-image") ? "MOSS" : `${lastOutput.subfolder || ""}/${lastOutput.name || lastOutput.filename || ""}`.toLowerCase().includes("qwen21") ? "Qwen Image 2.1" : rawProfile) : rawProfile;
+            outputProfiles[lastProfile].lastPromptId = String(image?.lastPromptId || legacy.lastPromptId || "");
+            outputProfiles[lastProfile].lastOutput = lastOutput || outputProfiles[lastProfile].outputs.at(-1) || null;
+            outputProfiles[lastProfile].deletedOutputs = Array.isArray(image?.deletedOutputs) ? image.deletedOutputs.map(String).filter(Boolean).slice(-100) : [];
+        }
         return ({
         id: String(image?.id || makeId()),
         title: String(image?.title || `图片 ${String(index + 1).padStart(2, "0")}`),
@@ -641,18 +687,13 @@ const normalizeState = (raw, projectName) => {
         referenceImages: Array.isArray(image?.referenceImages) ? image.referenceImages.filter((item) => item && typeof item === "object").map((item) => ({ ...item })) : [],
         editPreset: String(image?.editPreset || "free_edit"),
         drawCount: Math.max(1, Math.min(10, Math.round(Number(image?.drawCount || legacy.drawCount || 1)))),
-        outputs,
-        deletedOutputs: Array.isArray(image?.deletedOutputs) ? image.deletedOutputs.map(String).filter(Boolean).slice(-100) : [],
-        lastPromptId: String(image?.lastPromptId || legacy.lastPromptId || ""),
-        lastOutput,
+        outputProfiles,
     });
     };
     state = {
-        version: 2,
+        version: 3,
         projectName: String(projectName || state.projectName || "图片素材工程"),
-        modelProfile: ["MOSS", "Qwen Image 2.1", "Krea-2"].includes(state.modelProfile)
-            ? state.modelProfile
-            : ["KR2", "Krea2", "KR2 / Krea2"].includes(state.modelProfile) ? "Krea-2" : "MOSS",
+        modelProfile: rawProfile,
         kreaCategory: KREA_CATEGORIES.some((item) => item.id === state.kreaCategory) ? state.kreaCategory : "people",
         kreaPreset: KREA_CATEGORIES.flatMap((item) => item.items).some((item) => item.id === state.kreaPreset)
             ? state.kreaPreset
@@ -665,6 +706,10 @@ const normalizeState = (raw, projectName) => {
             models: Boolean(state.cleanupSettings?.models),
             every: Math.max(1, Math.min(99, Number(state.cleanupSettings?.every || 1))),
             monitorHardware: Boolean(state.cleanupSettings?.monitorHardware),
+        },
+        loraSwitches: {
+            "Qwen Image 2.1": state.loraSwitches?.["Qwen Image 2.1"] && typeof state.loraSwitches["Qwen Image 2.1"] === "object" ? { ...state.loraSwitches["Qwen Image 2.1"] } : {},
+            "Krea-2": state.loraSwitches?.["Krea-2"] && typeof state.loraSwitches["Krea-2"] === "object" ? { ...state.loraSwitches["Krea-2"] } : {},
         },
         generationProgress: {
             title: String(state.generationProgress?.title || "等待生成"),
@@ -688,6 +733,13 @@ const normalizeState = (raw, projectName) => {
         activeShotId: String(state.activeShotId || ""),
     };
     if (!state.shots.some((shot) => shot.id === state.activeShotId)) state.activeShotId = state.shots[0].id;
+    for (const shot of state.shots) {
+        for (const image of shot.images || []) {
+            if (image.qwenEditPreset === "multi_person" && image.prompt.includes("人物 1 默认位于画面左侧")) {
+                image.prompt = qwen21EditPrompt(image);
+            }
+        }
+    }
     return state;
 };
 
@@ -775,6 +827,11 @@ const QWEN_FACE_RESTORE_PRESETS = new Set(["outfit", "replace_person", "replace_
 const qwenLoraRoleForNode = (node, groups) => {
     const nodeType = String(node?.comfyClass || node?.type || node?.title || "").toLowerCase();
     if (!nodeType.includes("lora")) return "";
+    const loraName = String(node?.widgets?.find((widget) => widget.name === "lora_name")?.value || node?.widgets_values?.[0] || "").toLowerCase();
+    if (loraName.includes("natural-exposure")) return "natural_exposure";
+    if (loraName.includes("anything2real")) return "anime_to_real";
+    if (loraName.includes("anime_consistency")) return "anime_consistency";
+    if (loraName.includes("restore")) return "face_restore";
     for (const group of groups) {
         if (!pointInsideGroup(node, group)) continue;
         const title = String(group?.title || "").replace(/\s+/g, "").toLowerCase();
@@ -863,6 +920,31 @@ const kreaLoraEnabled = (role, context) => {
         || (role === "cg_game" && context.kreaEditOption === "cg_game");
 };
 
+const LORA_SWITCH_LABELS = {
+    "Qwen Image 2.1": {
+        natural_exposure: "自然曝光",
+        anime_to_real: "动漫转真人",
+        anime_consistency: "动漫一致性",
+        face_restore: "真人修复",
+    },
+    "Krea-2": {
+        common_detail: "通用细节",
+        portrait: "真人写实",
+        skin: "皮肤质感",
+        realism: "综合写实",
+        anime_to_real: "二次元转真人",
+        anime_outline: "描边插画",
+        retro_anime: "复古动漫",
+        cg_game: "CG 游戏",
+        product: "产品商业",
+        deplastic: "去塑料感",
+        character_sheet: "角色设定",
+        four_views: "角色四视图",
+        edit_general: "通用编辑",
+        edit_identity: "身份编辑",
+    },
+};
+
 const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory = false, resetQwenLoras = false) => {
     const graph = controllerNode?.graph;
     if (!graph || controllerNode.__xiawApplyingModelGroups) return false;
@@ -882,7 +964,6 @@ const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory =
     const alwaysMode = globalThis.LiteGraph?.ALWAYS ?? 0;
     // ComfyUI 的普通“忽略”是 BYPASS；NEVER 是长按后的“禁用”，两者外观和执行语义不同。
     const bypassMode = globalThis.LiteGraph?.BYPASS ?? 4;
-    const qwenContext = qwenLoraContextFromNode(controllerNode);
     const changes = [];
     for (const graphNode of graph._nodes || []) {
         if (graphNode === controllerNode) continue;
@@ -890,35 +971,17 @@ const applyModelGroupSwitch = (controllerNode, requestedProfile, recordHistory =
         if (WORKBENCH_NODE_TYPES.has(graphNodeClass)) continue;
         const profile = standaloneProfile || modelGroupProfileForNode(graphNode, mossGroup, qwenGroup, kreaGroup);
         if (!profile) continue;
-        const nodeType = String(graphNode?.comfyClass || graphNode?.type || "");
         const kreaLoraRole = profile === "Krea-2" ? kreaLoraRoleForNode(graphNode, groups) : "";
         const loraRole = profile === "Qwen Image 2.1" ? qwenLoraRoleForNode(graphNode, groups) : "";
         let nextMode;
         if (resetQwenLoras) {
-            // 功能切换只控制对应 LoRA，不触碰任何普通工作流节点。
-            if (activeProfile === "Krea-2" && kreaLoraRole) {
-                nextMode = kreaLoraRole === "common_detail" || kreaLoraEnabled(kreaLoraRole, qwenContext) ? alwaysMode : bypassMode;
-            } else if (activeProfile === "Krea-2" && profile === "Krea-2" && nodeType.toLowerCase().includes("lora")) {
-                nextMode = bypassMode;
-            } else if (activeProfile === "Qwen Image 2.1" && loraRole) {
-                const editPreset = qwenContext.imageMode ? qwenContext.editPreset : "";
-                const roleEnabled = (loraRole === "anime_to_real" && editPreset === "anime_to_real")
-                    || (loraRole === "anime_consistency" && QWEN_ANIME_CONSISTENCY_PRESETS.has(editPreset))
-                    || (loraRole === "face_restore" && QWEN_FACE_RESTORE_PRESETS.has(editPreset));
-                nextMode = loraRole === "natural_exposure" || roleEnabled ? alwaysMode : bypassMode;
-            }
-            else continue;
+            // 功能切换只更新工作台协议，不控制 LoRA 或任何普通工作流节点。
+            continue;
         } else {
             // 模型切换才启用/忽略整个 MOSS、Qwen、Krea 主链。
             nextMode = profile === activeProfile ? alwaysMode : bypassMode;
-            if (activeProfile === "Krea-2" && kreaLoraRole) {
-                if (kreaLoraRole === "common_detail") nextMode = alwaysMode;
-                else nextMode = graphNode.mode;
-            }
-            if (activeProfile === "Qwen Image 2.1" && loraRole) {
-                if (loraRole === "natural_exposure") nextMode = alwaysMode;
-                else nextMode = graphNode.mode;
-            }
+            if (activeProfile === "Krea-2" && kreaLoraRole) nextMode = graphNode.mode;
+            if (activeProfile === "Qwen Image 2.1" && loraRole) nextMode = graphNode.mode;
         }
         if (graphNode.mode !== nextMode) changes.push([graphNode, nextMode]);
     }
@@ -980,7 +1043,7 @@ function createWorkbench(node) {
         <header class="xiaw-header"><strong>${workbenchTitle}</strong><select data-model-profile ${fixedProfile ? "hidden" : ""}><option value="MOSS">MOSS 模型</option><option value="Qwen Image 2.1">Qwen Image 2.1</option><option value="Krea-2">Krea-2</option></select><div class="xiaw-header-progress"><div><span data-progress-title>等待生成</span><span data-progress-count>0%</span></div><progress data-progress-bar max="100" value="0"></progress></div><span class="xiaw-image-elapsed" data-image-elapsed>本图时长 --:--</span><div class="xiaw-header-hardware" data-hardware hidden><span data-hw-cpu>CPU --</span><span data-hw-memory>内存 --</span><span data-hw-vram>显存 --</span><span data-hw-temp>温度 --</span></div><em data-status></em><button class="primary" data-generate>▶ 开始生成</button><button class="xiaw-header-gear" data-settings-toggle title="生成设置" aria-label="生成设置">⚙</button><div class="xiaw-resource-settings" data-resource-settings hidden><strong>批量生成设置</strong><label><input type="checkbox" data-cleanup-cache> 卸载缓存</label><label><input type="checkbox" data-cleanup-vram> 卸载显存</label><label><input type="checkbox" data-cleanup-models> 卸载模型</label><label>每 <input type="number" min="1" max="99" step="1" data-cleanup-every> 个分镜卸载一次</label><label><input type="checkbox" data-monitor-hardware> 监控硬件</label><small>计数在每次开始或停止批量任务时重置</small></div><button class="close" data-close>×</button></header>
         <main class="xiaw-main">
           <aside class="xiaw-panel xiaw-resolution"><div class="xiaw-panel-head"><b data-left-title>生成设置</b></div><div class="xiaw-resolution-settings" data-resolution-settings><label><span>宽高比</span><select data-aspect><option value="1:1">1:1（方形）</option><option value="2:3">2:3（竖幅照片）</option><option value="3:2">3:2（照片）</option><option value="3:4">3:4（竖幅标准）</option><option value="4:3">4:3（标准）</option><option value="9:16">9:16（竖幅宽屏）</option><option value="16:9">16:9（宽屏）</option><option value="21:9">21:9（超宽屏）</option></select></label><label><span>分辨率</span><select data-megapixels></select></label><div><span>输出尺寸</span><output data-output-size></output></div><footer><button data-open-assets>▣ 资产库</button></footer></div><div class="xiaw-reference-panel" data-reference-panel hidden><section class="xiaw-qwen-reference-box" data-qwen-reference-box hidden><header><b>对应参考图</b><small data-qwen-reference-count>0 / 16</small></header><div data-qwen-role-slots></div></section><button class="xiaw-reference-drop" data-reference-upload><span>＋</span><b>上传参考图片</b><small>点击或拖入图片</small></button><div data-reference-list></div><footer><button data-open-assets>▣ 资产库</button></footer><input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden data-reference-files></div></aside>
-          <section class="xiaw-panel xiaw-stage"><div class="xiaw-shotbar"><div class="xiaw-camera-control" data-camera-control><button data-camera-open>运镜管理台</button></div><nav class="xiaw-generation-tabs"><button data-generation-choice="文生图">文生图</button><button data-generation-choice="图生图">图生图</button></nav></div><div class="xiaw-storyboard-controls"><div class="xiaw-shot-tabs" data-shot-tabs></div><div class="xiaw-storyboard-actions"><label class="xiaw-global-draw"><input type="checkbox" data-global-draw>全局</label><label class="xiaw-shot-draw-count">抽卡次数<select data-shot-draw-count>${Array.from({ length: 10 }, (_, count) => `<option value="${count + 1}">${count + 1} 次</option>`).join("")}</select></label><button class="success" data-generate-current>生成当前分镜</button><button data-clear>清空</button><button class="primary" data-add>＋ 分镜</button><small data-image-status>等待生成</small></div></div><div class="xiaw-storyboard-pager"><button class="xiaw-page-arrow" data-board-prev aria-label="上一组分镜">‹</button><div class="xiaw-storyboard-grid" data-storyboard-grid></div><button class="xiaw-page-arrow" data-board-next aria-label="下一组分镜">›</button></div></section>
+          <section class="xiaw-panel xiaw-stage"><div class="xiaw-shotbar"><div class="xiaw-camera-control" data-camera-control><button data-camera-open>运镜管理台</button></div><nav class="xiaw-lora-switches" data-lora-switches aria-label="LoRA 分组开关"></nav><nav class="xiaw-generation-tabs"><button data-generation-choice="文生图">文生图</button><button data-generation-choice="图生图">图生图</button></nav></div><div class="xiaw-storyboard-controls"><div class="xiaw-shot-tabs" data-shot-tabs></div><div class="xiaw-storyboard-actions"><label class="xiaw-global-draw"><input type="checkbox" data-global-draw>全局</label><label class="xiaw-shot-draw-count">抽卡次数<select data-shot-draw-count>${Array.from({ length: 10 }, (_, count) => `<option value="${count + 1}">${count + 1} 次</option>`).join("")}</select></label><button class="success" data-generate-current>生成当前分镜</button><button data-clear>清空</button><button class="primary" data-add>＋ 分镜</button><small data-image-status>等待生成</small></div></div><div class="xiaw-storyboard-pager"><button class="xiaw-page-arrow" data-board-prev aria-label="上一组分镜">‹</button><div class="xiaw-storyboard-grid" data-storyboard-grid></div><button class="xiaw-page-arrow" data-board-next aria-label="下一组分镜">›</button></div></section>
           <aside class="xiaw-panel xiaw-settings">
             <section class="xiaw-edit-tools" data-edit-tools hidden><div class="xiaw-moss-tools" data-qwen-edit-tools><nav class="xiaw-moss-groups" data-qwen-edit-groups></nav><header class="xiaw-moss-section-head"><b data-qwen-edit-title>基础编辑</b><small>Qwen Image 2.1 · 图生图</small></header><nav class="xiaw-moss-presets" data-qwen-edit-presets></nav></div><div class="xiaw-moss-tools" data-krea-edit-tools><nav class="xiaw-moss-groups" data-krea-edit-groups></nav><header class="xiaw-moss-section-head"><b data-krea-edit-title>基础编辑</b><small>Krea-2 Edit · 图生图</small></header><nav class="xiaw-moss-presets" data-krea-edit-presets></nav></div><div data-legacy-edit-tools><nav class="xiaw-edit-groups"><button data-edit-group="free">自由编辑</button><button data-edit-group="people">人物编辑</button><button data-edit-group="character">角色资产</button><button data-edit-group="product">商品设计</button><button data-edit-group="process">画面处理</button></nav><nav class="xiaw-edit-presets"><button data-edit-preset="free_edit">自由编辑</button><button data-edit-preset="outfit">智能换装</button><button data-edit-preset="replace_person">人物替换</button><button data-edit-preset="replace_background">换背景</button><button data-edit-preset="pose_transfer">姿势迁移</button><button data-edit-preset="action_extract">动作提取</button><button data-edit-preset="hair_makeup">发型妆容</button><button data-edit-preset="multi_person">多人融合</button></nav></div></section><section class="xiaw-mode-panel" data-text-tools><div class="xiaw-moss-tools" data-moss-tools><nav class="xiaw-moss-groups">${Object.entries(MOSS_GROUPS).map(([id,item])=>`<button data-moss-group="${id}"><i>${item.icon}</i><span>${item.label}</span></button>`).join("")}</nav><label class="xiaw-moss-search"><span>⌕</span><input type="search" data-moss-search placeholder="搜索功能模板（如：海报、Logo、主图）"></label><header class="xiaw-moss-section-head"><b data-moss-section-title>通用创作</b><small data-moss-count></small></header><nav class="xiaw-moss-presets" data-moss-presets></nav></div><div class="xiaw-moss-tools" data-qwen-text-tools><nav class="xiaw-moss-groups" data-qwen-text-groups></nav><header class="xiaw-moss-section-head"><b data-qwen-text-title>通用创作</b><small>Qwen Image 2.1 · 文生图</small></header><nav class="xiaw-moss-presets" data-qwen-text-presets></nav></div><div class="xiaw-moss-tools" data-krea-text-tools><nav class="xiaw-moss-groups"><button class="active"><i>✦</i><span>自由编辑</span></button></nav><header class="xiaw-moss-section-head"><b>自由编辑</b><small>Krea-2 · 文生图</small></header><nav class="xiaw-moss-presets"><button class="active" data-krea-text-free><i>✦</i><span>自由编辑</span></button></nav><small data-krea-text-description></small></div><button data-apply-template hidden>应用生成模板</button></section>
             <div class="xiaw-prompt-fields" data-prompt-fields><nav class="xiaw-prompt-tabs"><button class="active" data-prompt-tab="positive">正向提示词</button><button data-prompt-tab="negative">负向提示词</button><span></span><button data-prompt-tab="demo">演示提示词</button><button data-reset-prompts>官方提示词说明</button></nav><section data-prompt-pane="positive"><div class="xiaw-qwen-prompt-rich" contenteditable="true" data-prompt-rich data-placeholder="描述编辑要求；参考图会以图片标签显示" hidden></div><textarea data-prompt placeholder="描述主体、场景、构图、光线和风格"></textarea></section><section data-prompt-pane="negative" hidden><textarea data-negative placeholder="不希望出现的内容"></textarea></section><section data-prompt-pane="demo" hidden><textarea data-demo-prompt readonly aria-label="当前分类演示提示词"></textarea></section></div>
@@ -1083,16 +1146,45 @@ function createWorkbench(node) {
         q("[data-progress-bar]").value = value;
         renderImageDuration();
     };
+    const firstFiniteNumber = (...values) => {
+        for (const value of values) {
+            const number = Number(value);
+            if (value !== "" && value !== null && value !== undefined && Number.isFinite(number)) return number;
+        }
+        return null;
+    };
+    const progressEventPayload = (event) => {
+        const raw = event?.detail ?? event ?? {};
+        const objects = [raw?.progress, raw?.data, raw?.status, raw].filter((value) => value && typeof value === "object");
+        const detail = objects.find((value) => ["value", "current", "step", "max", "total", "steps", "percent", "percentage"].some((key) => value[key] !== undefined)) || raw;
+        const eventPrompt = String(detail?.prompt_id ?? detail?.promptId ?? raw?.prompt_id ?? raw?.promptId ?? raw?.data?.prompt_id ?? raw?.data?.promptId ?? "");
+        const value = firstFiniteNumber(detail?.value, detail?.current, detail?.step, raw?.value, raw?.current, raw?.step);
+        const maximum = firstFiniteNumber(detail?.max, detail?.total, detail?.steps, raw?.max, raw?.total, raw?.steps);
+        let percent = firstFiniteNumber(detail?.percent, detail?.percentage, raw?.percent, raw?.percentage);
+        if (percent === null && typeof raw?.progress === "number") percent = raw.progress;
+        if (value !== null && maximum !== null && maximum > 0) percent = value / maximum * 100;
+        if (percent !== null && percent >= 0 && percent <= 1 && maximum === null) percent *= 100;
+        return { eventPrompt, percent, value, maximum };
+    };
     const onSamplingProgress = (event) => {
         if (!generationBatch.total) return;
-        const raw = event?.detail || {};
-        const detail = raw.progress || raw;
-        const eventPrompt = String(detail.prompt_id ?? detail.promptId ?? raw.prompt_id ?? raw.promptId ?? "");
+        const { eventPrompt, percent, value, maximum } = progressEventPayload(event);
         if (eventPrompt && generationBatch.promptId && eventPrompt !== generationBatch.promptId) return;
-        const value = Number(detail.value || 0), maximum = Math.max(1, Number(detail.max || 1));
-        const samplePercent = Math.max(0, Math.min(100, value / maximum * 100));
+        if (percent === null) return;
+        const samplePercent = Math.max(0, Math.min(100, percent));
         const overall = (generationBatch.index + samplePercent / 100) / generationBatch.total * 100;
-        setHeaderProgress("采样生成中", overall, `图片 ${generationBatch.index + 1}/${generationBatch.total}`);
+        const stepText = value !== null && maximum !== null && maximum > 0
+            ? `${Math.max(0, Math.round(value))}/${Math.max(1, Math.round(maximum))} 步`
+            : "步数读取中";
+        setHeaderProgress(`采样生成中 · ${stepText}`, overall, `当前图 ${Math.round(samplePercent)}% · 图片 ${generationBatch.index + 1}/${generationBatch.total}`);
+    };
+    const onExecutionStart = (event) => {
+        if (!generationBatch.total) return;
+        const raw = event?.detail || {};
+        const eventPrompt = String(raw.prompt_id ?? raw.promptId ?? raw.execution?.prompt_id ?? raw.data?.prompt_id ?? "");
+        if (eventPrompt && generationBatch.promptId && eventPrompt !== generationBatch.promptId) return;
+        const overall = generationBatch.index / generationBatch.total * 100;
+        setHeaderProgress("工作流执行中", overall, `图片 ${generationBatch.index + 1}/${generationBatch.total}`);
     };
     const onExecutionInterrupted = (event) => {
         const raw = event?.detail || {};
@@ -1141,7 +1233,12 @@ function createWorkbench(node) {
     };
     const activeShot = () => state.shots.find((shot) => shot.id === state.activeShotId) || state.shots[0];
     const activeImage = (shot = activeShot()) => shot.images.find((image) => image.id === shot.activeImageId) || shot.images[0];
-    const newImageTask = (index) => ({ id: makeId(), title: `图片 ${String(index + 1).padStart(2, "0")}`, selected: true, mode: "text", style: "general", mossPreset: "general_free", qwenTextPreset: "text_to_image", qwenTextOption: "", qwenEditPreset: "free_edit", qwenEditOption: "", kreaEditPreset: "free_edit", kreaEditOption: "", cameraPreset: "", framingPreset: "medium", propPreset: "none", lightPreset: "softbox", editPreset: "free_edit", prompt: "", negative: "", referenceImages: [], drawCount: 1, outputs: [], lastPromptId: "", lastOutput: null });
+    const outputStateFor = (task, profile = state.modelProfile) => {
+        task.outputProfiles ||= {};
+        task.outputProfiles[profile] ||= { outputs: [], deletedOutputs: [], lastPromptId: "", lastOutput: null };
+        return task.outputProfiles[profile];
+    };
+    const newImageTask = (index) => ({ id: makeId(), title: `图片 ${String(index + 1).padStart(2, "0")}`, selected: true, mode: "text", style: "general", mossPreset: "general_free", qwenTextPreset: "text_to_image", qwenTextOption: "", qwenEditPreset: "free_edit", qwenEditOption: "", kreaEditPreset: "free_edit", kreaEditOption: "", cameraPreset: "", framingPreset: "medium", propPreset: "none", lightPreset: "softbox", editPreset: "free_edit", prompt: "", negative: "", referenceImages: [], drawCount: 1, outputProfiles: Object.fromEntries(["MOSS", "Qwen Image 2.1", "Krea-2"].map((profile) => [profile, { outputs: [], deletedOutputs: [], lastPromptId: "", lastOutput: null }])) });
     const TEMPLATES = {
         general: { positive: "主体明确，构图完整，空间关系准确，细节清晰，光影自然，色彩协调，高质量画面", negative: "低清晰度，模糊，结构错误，比例失调，多余肢体，畸形手指，乱码，水印，边框" },
         photo: { positive: "真实摄影，主体对焦准确，自然肤质，电影级布光，真实景深，高动态范围，细节丰富", negative: "卡通感，塑料皮肤，过度锐化，曝光错误，噪点，运动模糊，结构畸变，水印" },
@@ -1157,6 +1254,68 @@ function createWorkbench(node) {
         node.properties ||= {};
         node.properties.xiantuImageAssetState = stateWidget.value;
         node.graph?.setDirtyCanvas?.(true, true);
+    };
+    const loraNodesForProfile = (profile) => {
+        const graph = node.graph;
+        if (!graph || !LORA_SWITCH_LABELS[profile]) return new Map();
+        const groups = Array.isArray(graph._groups) ? graph._groups : [];
+        const titleOf = (group) => String(group?.title || "").toLowerCase();
+        const mossGroup = groups.find((group) => titleOf(group).includes("moss"));
+        const qwenGroup = groups.find((group) => titleOf(group).includes("qwen"));
+        const kreaGroup = groups.find((group) => titleOf(group).includes("krea"));
+        const result = new Map();
+        for (const graphNode of graph._nodes || []) {
+            const graphNodeProfile = modelGroupProfileForNode(graphNode, mossGroup, qwenGroup, kreaGroup);
+            if (graphNodeProfile !== profile) continue;
+            const role = profile === "Qwen Image 2.1" ? qwenLoraRoleForNode(graphNode, groups) : kreaLoraRoleForNode(graphNode, groups);
+            if (!role || !LORA_SWITCH_LABELS[profile][role]) continue;
+            if (!result.has(role)) result.set(role, []);
+            result.get(role).push(graphNode);
+        }
+        return result;
+    };
+    const applySavedLoraSwitches = (profile) => {
+        if (!LORA_SWITCH_LABELS[profile]) return;
+        const switches = state.loraSwitches[profile] || {};
+        const alwaysMode = globalThis.LiteGraph?.ALWAYS ?? 0;
+        const bypassMode = globalThis.LiteGraph?.BYPASS ?? 4;
+        for (const [role, nodes] of loraNodesForProfile(profile)) {
+            if (typeof switches[role] !== "boolean") continue;
+            for (const graphNode of nodes) graphNode.mode = switches[role] ? alwaysMode : bypassMode;
+        }
+        node.graph?.change?.();
+        node.graph?.setDirtyCanvas?.(true, true);
+    };
+    const renderLoraSwitches = () => {
+        const host = q("[data-lora-switches]");
+        const profile = state.modelProfile;
+        const labels = LORA_SWITCH_LABELS[profile];
+        host.hidden = !labels;
+        host.classList.toggle("krea", profile === "Krea-2");
+        q(".xiaw-stage")?.classList.toggle("lora-two-rows", profile === "Krea-2");
+        if (!labels) { host.replaceChildren(); return; }
+        const groupedNodes = loraNodesForProfile(profile);
+        const switches = state.loraSwitches[profile] ||= {};
+        const bypassMode = globalThis.LiteGraph?.BYPASS ?? 4;
+        for (const [role, nodes] of groupedNodes) {
+            if (typeof switches[role] !== "boolean") switches[role] = nodes.some((graphNode) => graphNode.mode !== bypassMode);
+        }
+        host.innerHTML = `<b>LoRA</b>${Object.entries(labels).map(([role, label]) => {
+            const available = groupedNodes.has(role);
+            const enabled = available && switches[role] === true;
+            return `<button type="button" class="${enabled ? "active" : ""}" data-lora-switch="${role}" ${available ? "" : "disabled"} title="${available ? `${label} LoRA 分组：${enabled ? "开启" : "忽略"}` : `${label} LoRA 分组未找到`}">${label}<i>${enabled ? "开" : "关"}</i></button>`;
+        }).join("")}`;
+        host.querySelectorAll("[data-lora-switch]").forEach((button) => button.onclick = () => {
+            const role = button.dataset.loraSwitch;
+            const enabled = !(switches[role] === true);
+            switches[role] = enabled;
+            const alwaysMode = globalThis.LiteGraph?.ALWAYS ?? 0;
+            for (const graphNode of groupedNodes.get(role) || []) graphNode.mode = enabled ? alwaysMode : bypassMode;
+            node.graph?.change?.();
+            node.graph?.setDirtyCanvas?.(true, true);
+            save();
+            renderLoraSwitches();
+        });
     };
     const renderQwenRichPrompt = () => {
         const editor = q("[data-prompt-rich]");
@@ -1372,6 +1531,7 @@ function createWorkbench(node) {
         renderKreaControls();
         qa("[data-edit-preset]").forEach((button) => button.classList.toggle("active", button.dataset.editPreset === image.editPreset));
         renderReferences();
+        renderLoraSwitches();
     };
     const renderPromptTabs = () => {
         qa("[data-prompt-tab]").forEach((button) => button.classList.toggle("active", button.dataset.promptTab === promptTab));
@@ -1410,7 +1570,7 @@ function createWorkbench(node) {
     q("[data-moss-search]").oninput = (event) => { mossSearch = event.target.value; renderMossControls(); };
     const previewCandidatesFor = (shot) => {
         const seen = new Set();
-        return shot.images.flatMap((task) => (Array.isArray(task.outputs) ? task.outputs : []).map((output, outputIndex) => ({ task, output, outputIndex, key: `${task.id}::${fileRecordKey(output)}` }))).reverse().filter((item) => { if (seen.has(item.key)) return false; seen.add(item.key); return true; }).slice(0, 10);
+        return shot.images.flatMap((task) => outputStateFor(task).outputs.map((output, outputIndex) => ({ task, output, outputIndex, key: `${task.id}::${fileRecordKey(output)}` }))).reverse().filter((item) => { if (seen.has(item.key)) return false; seen.add(item.key); return true; }).slice(0, 10);
     };
     const allPreviewCandidates = () => state.shots.flatMap((shot) => previewCandidatesFor(shot).map((item) => ({ ...item, shot, shotId: shot.id, previewKey: `${shot.id}::${item.key}` })));
     const currentPreview = () => previewItems[previewIndex] || null;
@@ -1469,10 +1629,11 @@ function createWorkbench(node) {
         } catch (error) { await workbenchAlert(String(error?.message || error), "删除失败"); return; }
         const task = shot.images.find((entry) => entry.id === item.task.id);
         if (!task) return;
+        const outputState = outputStateFor(task);
         const removedKey = fileRecordKey(item.output);
-        task.deletedOutputs = [...new Set([...(task.deletedOutputs || []), removedKey])].slice(-100);
-        task.outputs = (task.outputs || []).filter((output) => fileRecordKey(output) !== removedKey);
-        if (task.lastOutput && fileRecordKey(task.lastOutput) === removedKey) task.lastOutput = task.outputs.at(-1) || null;
+        outputState.deletedOutputs = [...new Set([...outputState.deletedOutputs, removedKey])].slice(-100);
+        outputState.outputs = outputState.outputs.filter((output) => fileRecordKey(output) !== removedKey);
+        if (outputState.lastOutput && fileRecordKey(outputState.lastOutput) === removedKey) outputState.lastOutput = outputState.outputs.at(-1) || null;
         previewItems = allPreviewCandidates();
         previewIndex = Math.min(previewIndex, Math.max(0, previewItems.length - 1));
         syncFields(); render(); save(); refreshImagePreview();
@@ -1485,7 +1646,7 @@ function createWorkbench(node) {
             const shotIndex = pageStart + index;
             const shot = state.shots[shotIndex];
             const task = shot ? activeImage(shot) : null;
-            const url = fileUrl(task?.lastOutput);
+            const url = fileUrl(task ? outputStateFor(task).lastOutput : null);
             const active = shot?.id === state.activeShotId ? "active" : "";
             return `<button type="button" class="xiaw-storyboard-cell ${active} ${shot ? "" : "empty"}" ${shot ? `data-preview-shot="${esc(shot.id)}"` : "disabled"}><b>分镜 ${String(shotIndex + 1).padStart(2, "0")}</b>${url ? `<img src="${esc(url)}" alt="分镜 ${shotIndex + 1}"><span class="xiaw-storyboard-zoom" data-preview-zoom="${esc(shot.id)}" role="button" title="放大查看">⛶</span>` : ""}</button>`;
         }).join("");
@@ -1498,9 +1659,10 @@ function createWorkbench(node) {
             event.preventDefault(); event.stopPropagation();
             const previewShot = state.shots.find((item) => item.id === button.dataset.previewZoom);
             const previewTask = previewShot ? activeImage(previewShot) : null;
-            const url = fileUrl(previewTask?.lastOutput);
+            const previewOutput = previewTask ? outputStateFor(previewTask).lastOutput : null;
+            const url = fileUrl(previewOutput);
             if (!url) return;
-            openImagePreview(previewShot, previewTask.lastOutput);
+            openImagePreview(previewShot, previewOutput);
         });
     };
     const selectShot = (shotId) => {
@@ -1527,7 +1689,8 @@ function createWorkbench(node) {
             const candidate = candidates[index];
             if (!candidate) return `<article class="xiaw-candidate empty"><span>${String(index + 1).padStart(2, "0")}</span></article>`;
             const url = fileUrl(candidate.output);
-            const selectedOutputIndex = (candidate.task.outputs || []).map(fileRecordKey).lastIndexOf(fileRecordKey(candidate.task.lastOutput));
+            const candidateState = outputStateFor(candidate.task);
+            const selectedOutputIndex = candidateState.outputs.map(fileRecordKey).lastIndexOf(fileRecordKey(candidateState.lastOutput));
             const selected = candidate.task.id === shot.activeImageId && candidate.outputIndex === selectedOutputIndex;
             const checked = selectedOutputs.has(candidate.key) ? "checked" : "";
             return `<article class="xiaw-candidate ${selected ? "active" : ""}"><button type="button" class="xiaw-candidate-open" data-output-task="${esc(candidate.task.id)}" data-output-index="${candidate.outputIndex}"><span>${String(index + 1).padStart(2, "0")}</span>${url ? `<img src="${esc(url)}" alt="候选图 ${index + 1}">` : ""}</button><label class="xiaw-candidate-check" title="选择候选图"><input type="checkbox" data-output-select="${esc(candidate.key)}" ${checked}></label><button type="button" class="xiaw-candidate-delete" data-output-delete="${esc(candidate.key)}" title="删除候选图" aria-label="删除候选图">×</button></article>`;
@@ -1549,7 +1712,7 @@ function createWorkbench(node) {
         };
         const deleteOutputs = async (keys) => {
             if (!keys.size) return;
-            const records = shot.images.flatMap((task) => (Array.isArray(task.outputs) ? task.outputs : []).filter((output) => keys.has(`${task.id}::${fileRecordKey(output)}`)));
+            const records = shot.images.flatMap((task) => outputStateFor(task).outputs.filter((output) => keys.has(`${task.id}::${fileRecordKey(output)}`)));
             const uniqueRecords = [...new Map(records.map((output) => [fileRecordKey(output), output])).values()];
             if (!uniqueRecords.length) return;
             if (!await workbenchConfirm(`确认永久删除 ${uniqueRecords.length} 张图片？\n此操作会删除 output 文件夹中的原图，无法恢复。`)) return;
@@ -1559,15 +1722,16 @@ function createWorkbench(node) {
                 if (!response.ok || payload.ok === false) throw new Error(payload.error || "删除输出图片失败");
             } catch (error) { await workbenchAlert(String(error?.message || error), "删除失败"); return; }
             for (const task of shot.images) {
-                const removed = (Array.isArray(task.outputs) ? task.outputs : []).filter((output) => keys.has(`${task.id}::${fileRecordKey(output)}`));
-                task.deletedOutputs = [...new Set([...(task.deletedOutputs || []), ...removed.map(fileRecordKey)])].slice(-100);
-                task.outputs = (Array.isArray(task.outputs) ? task.outputs : []).filter((output) => !keys.has(`${task.id}::${fileRecordKey(output)}`));
-                if (task.lastOutput && !task.outputs.some((output) => fileRecordKey(output) === fileRecordKey(task.lastOutput))) task.lastOutput = task.outputs.at(-1) || null;
+                const outputState = outputStateFor(task);
+                const removed = outputState.outputs.filter((output) => keys.has(`${task.id}::${fileRecordKey(output)}`));
+                outputState.deletedOutputs = [...new Set([...outputState.deletedOutputs, ...removed.map(fileRecordKey)])].slice(-100);
+                outputState.outputs = outputState.outputs.filter((output) => !keys.has(`${task.id}::${fileRecordKey(output)}`));
+                if (outputState.lastOutput && !outputState.outputs.some((output) => fileRecordKey(output) === fileRecordKey(outputState.lastOutput))) outputState.lastOutput = outputState.outputs.at(-1) || null;
             }
             keys.forEach((key) => selectedOutputs.delete(key));
             syncFields(); render(); save();
         };
-        qa("[data-output-task]").forEach((button) => button.onclick = () => { const task = shot.images.find((item) => item.id === button.dataset.outputTask); const output = task?.outputs?.[Number(button.dataset.outputIndex)]; if (!task || !output) return; shot.activeImageId = task.id; task.lastOutput = output; syncFields(); render(); save(); applyModelGroupSwitch(node, state.modelProfile, true); });
+        qa("[data-output-task]").forEach((button) => button.onclick = () => { const task = shot.images.find((item) => item.id === button.dataset.outputTask); if (!task) return; const outputState = outputStateFor(task); const output = outputState.outputs[Number(button.dataset.outputIndex)]; if (!output) return; shot.activeImageId = task.id; outputState.lastOutput = output; syncFields(); render(); save(); applyModelGroupSwitch(node, state.modelProfile, true); });
         qa("[data-output-select]").forEach((box) => box.onchange = () => { if (box.checked) selectedOutputs.add(box.dataset.outputSelect); else selectedOutputs.delete(box.dataset.outputSelect); refreshOutputSelection(); });
         qa("[data-output-delete]").forEach((button) => button.onclick = () => deleteOutputs(new Set([button.dataset.outputDelete])));
         q("[data-output-select-all]").onchange = (event) => { for (const candidate of candidates) { if (event.target.checked) selectedOutputs.add(candidate.key); else selectedOutputs.delete(candidate.key); } render(); };
@@ -1585,7 +1749,10 @@ function createWorkbench(node) {
             if (/\.(?:png|jpe?g|webp|bmp)$/i.test(name)) found.push({ name, subfolder: String(value.subfolder || ""), type: String(value.type || "output") });
             Object.values(value).forEach(visit);
         };
-        visit(history?.outputs || history);
+        const outputs = history?.outputs;
+        const outputNodeIds = Array.isArray(history?.prompt?.[4]) ? history.prompt[4].map(String) : [];
+        if (outputs && outputNodeIds.length) outputNodeIds.forEach((outputNodeId) => visit(outputs[outputNodeId]));
+        else visit(outputs || history);
         return [...new Map(found.map((item) => [`${item.type}/${item.subfolder}/${item.name}`, item])).values()];
     };
     const queuedWorkbenchState = (record) => {
@@ -1594,36 +1761,39 @@ function createWorkbench(node) {
         if (!WORKBENCH_NODE_TYPES.has(String(queuedNode?.class_type || ""))) return null;
         try { return JSON.parse(String(queuedNode.inputs?.workbench_state || "{}")); } catch { return null; }
     };
-    const ingestHistoryOutput = (record, promptId, allowReviveDeleted = false) => {
+    const queuedHistoryTarget = (record) => {
         const queuedState = queuedWorkbenchState(record);
-        const images = outputImages(record);
-        if (!queuedState || !images.length) return false;
+        if (!queuedState) return null;
         const queuedShot = (queuedState.shots || []).find((item) => item?.id === queuedState.activeShotId);
         const shot = state.shots.find((item) => item.id === queuedState.activeShotId);
         const imageTask = shot?.images?.find((item) => item.id === queuedShot?.activeImageId);
-        if (!imageTask) return false;
+        const profile = ["KR2", "Krea2", "KR2 / Krea2"].includes(queuedState.modelProfile) ? "Krea-2" : (["MOSS", "Qwen Image 2.1", "Krea-2"].includes(queuedState.modelProfile) ? queuedState.modelProfile : "MOSS");
+        return imageTask ? { queuedState, queuedShot, shot, imageTask, profile } : null;
+    };
+    const ingestHistoryOutput = (record, promptId) => {
+        const target = queuedHistoryTarget(record);
+        const images = outputImages(record);
+        if (!target || !images.length) return false;
+        const { imageTask, profile } = target;
+        const outputState = outputStateFor(imageTask, profile);
         const output = images.at(-1);
         const outputKey = fileRecordKey(output);
-        if ((imageTask.deletedOutputs || []).includes(outputKey)) {
-            if (!allowReviveDeleted) return false;
-            imageTask.deletedOutputs = (imageTask.deletedOutputs || []).filter((key) => key !== outputKey);
-        }
-        imageTask.outputs = Array.isArray(imageTask.outputs) ? imageTask.outputs : [];
-        let savedOutput = imageTask.outputs.find((item) => fileRecordKey(item) === fileRecordKey(output));
+        if (outputState.deletedOutputs.includes(outputKey)) return false;
+        let savedOutput = outputState.outputs.find((item) => fileRecordKey(item) === fileRecordKey(output));
         if (!savedOutput) {
-            imageTask.outputs.push(output);
-            imageTask.outputs = imageTask.outputs.slice(-10);
-            savedOutput = imageTask.outputs.at(-1);
+            outputState.outputs.push(output);
+            outputState.outputs = outputState.outputs.slice(-10);
+            savedOutput = outputState.outputs.at(-1);
         }
-        imageTask.lastPromptId = String(promptId || "");
-        imageTask.lastOutput = savedOutput;
+        outputState.lastPromptId = String(promptId || "");
+        outputState.lastOutput = savedOutput;
         return true;
     };
-    const syncPromptHistory = async (promptId, allowReviveDeleted = false) => {
+    const syncPromptHistory = async (promptId) => {
         const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}?t=${Date.now()}`);
         if (!response.ok) return false;
         const record = (await response.json())?.[promptId];
-        if (!record || !ingestHistoryOutput(record, promptId, allowReviveDeleted)) return false;
+        if (!record || String(record?.status?.status_str || "") !== "success" || !ingestHistoryOutput(record, promptId)) return false;
         syncFields(); render(); save();
         return true;
     };
@@ -1634,13 +1804,9 @@ function createWorkbench(node) {
         let restored = false;
         for (const [promptId, record] of entries) {
             if (String(record?.status?.status_str || "") !== "success") continue;
-            if (ingestHistoryOutput(record, promptId)) { restored = true; continue; }
-            const latestOutput = outputImages(record).at(-1);
-            if (!latestOutput) continue;
-            try {
-                const exists = await fetch(fileUrl(latestOutput), { method: "HEAD" });
-                if (exists.ok && ingestHistoryOutput(record, promptId, true)) restored = true;
-            } catch {}
+            const target = queuedHistoryTarget(record);
+            if (!target || String(outputStateFor(target.imageTask, target.profile).lastPromptId || "") !== String(promptId)) continue;
+            if (ingestHistoryOutput(record, promptId)) restored = true;
         }
         if (restored) { syncFields(); render(); save(); }
     };
@@ -1650,12 +1816,11 @@ function createWorkbench(node) {
         if (!key) return Promise.resolve(false);
         if (promptHistorySyncs.has(key)) return promptHistorySyncs.get(key);
         const pending = (async () => {
-            for (let attempt = 0; attempt < 12 && root.isConnected; attempt += 1) {
+            for (let attempt = 0; attempt < 40 && root.isConnected; attempt += 1) {
                 try { if (await syncPromptHistory(key)) return true; }
-                catch (error) { if (attempt === 11) console.warn("图片生成完成后同步工作台失败", error); }
+                catch (error) { if (attempt === 39) console.warn("图片生成完成后同步工作台失败", error); }
                 await new Promise((resolve) => setTimeout(resolve, 250));
             }
-            try { await recoverLatestHistory(); } catch (error) { console.warn("图片生成完成后恢复最近图片失败", error); }
             return false;
         })().finally(() => promptHistorySyncs.delete(key));
         promptHistorySyncs.set(key, pending);
@@ -1906,7 +2071,24 @@ function createWorkbench(node) {
         renderMode(); syncFields(); applyNodeProtocol(node, state); save();
         applyModelGroupSwitch(node, state.modelProfile, true, true);
     });
-    q("[data-model-profile]").onchange = (event) => { if (fixedProfile) return; state.modelProfile = event.target.value; activeImage().style = "general"; activeImage().mossPreset = "general_free"; mossGroup = "general"; enforceCapabilities(); renderMode(); syncFields(); applyNodeProtocol(node, state); save(); applyModelGroupSwitch(node, state.modelProfile, true); };
+    q("[data-model-profile]").onchange = (event) => {
+        if (fixedProfile) return;
+        state.modelProfile = event.target.value;
+        selectedOutputs.clear();
+        activeImage().style = "general";
+        activeImage().mossPreset = "general_free";
+        mossGroup = "general";
+        enforceCapabilities();
+        renderMode();
+        syncFields();
+        applyNodeProtocol(node, state);
+        applyModelGroupSwitch(node, state.modelProfile, true);
+        applySavedLoraSwitches(state.modelProfile);
+        renderLoraSwitches();
+        render();
+        showResult();
+        save();
+    };
     q("[data-reference-upload]").onclick = () => { pendingReferenceRole = ""; q("[data-reference-files]").click(); };
     q("[data-reference-files]").onchange = async (event) => { try { await uploadReferenceFiles(event.target.files, pendingReferenceRole); } catch (error) { q("[data-status]").textContent = String(error?.message || error); } pendingReferenceRole = ""; event.target.value = ""; };
     const referenceDrop = q("[data-reference-upload]");
@@ -2098,9 +2280,10 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
             const response = await api.fetchApi("/xiantu/image-workbench/rename-output", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ record: item.output, name: String(value).trim() }) });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok || !payload.record) throw new Error(payload.error || "图片改名失败");
-            item.task.deletedOutputs = [...new Set([...(item.task.deletedOutputs || []), oldKey])].slice(-100);
+            const outputState = outputStateFor(item.task);
+            outputState.deletedOutputs = [...new Set([...outputState.deletedOutputs, oldKey])].slice(-100);
             Object.assign(item.output, payload.record);
-            if (item.task.lastOutput && fileRecordKey(item.task.lastOutput) === oldKey) item.task.lastOutput = item.output;
+            if (outputState.lastOutput && fileRecordKey(outputState.lastOutput) === oldKey) outputState.lastOutput = item.output;
             const newKey = fileRecordKey(item.output);
             const shot = item.shot || state.shots.find((entry) => entry.id === previewShotId);
             previewItems = allPreviewCandidates();
@@ -2242,22 +2425,22 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                 generationBatch.promptId = String(queued.prompt_id);
                 setHeaderProgress("采样生成中", index / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
                 completedPromptIds.push(String(queued.prompt_id));
-                imageTask.lastPromptId = String(queued.prompt_id);
+                const outputState = outputStateFor(imageTask);
+                outputState.lastPromptId = String(queued.prompt_id);
                 save();
                 const history = await waitForPrompt(queued.prompt_id);
                 const images = outputImages(history);
                 if (!images.length) throw new Error(`图片 ${index + 1} 完成，但工作流没有输出图片文件`);
-                imageTask.outputs = Array.isArray(imageTask.outputs) ? imageTask.outputs : [];
                 const generatedOutput = images.at(-1);
                 const generatedKey = fileRecordKey(generatedOutput);
-                imageTask.deletedOutputs = (imageTask.deletedOutputs || []).filter((key) => key !== generatedKey);
-                let savedOutput = imageTask.outputs.find((output) => fileRecordKey(output) === fileRecordKey(generatedOutput));
+                outputState.deletedOutputs = outputState.deletedOutputs.filter((key) => key !== generatedKey);
+                let savedOutput = outputState.outputs.find((output) => fileRecordKey(output) === fileRecordKey(generatedOutput));
                 if (!savedOutput) {
-                    imageTask.outputs.push(generatedOutput);
-                    imageTask.outputs = imageTask.outputs.slice(-10);
-                    savedOutput = imageTask.outputs.at(-1);
+                    outputState.outputs.push(generatedOutput);
+                    outputState.outputs = outputState.outputs.slice(-10);
+                    savedOutput = outputState.outputs.at(-1);
                 }
-                imageTask.lastOutput = savedOutput;
+                outputState.lastOutput = savedOutput;
                 stopImageDuration();
                 setHeaderProgress("图片生成完成", (index + 1) / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
                 showResult(imageTask);
@@ -2271,7 +2454,7 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                     }
                 }
             }
-            for (const promptId of completedPromptIds) await syncPromptHistory(promptId, true);
+            for (const promptId of completedPromptIds) await syncPromptHistory(promptId);
             state.activeShotId = originalShot;
             const restoredShot = activeShot();
             if (restoredShot.images.some((image) => image.id === originalImage)) restoredShot.activeImageId = originalImage;
@@ -2329,20 +2512,27 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
         return generateJobs(state.shots.slice(startIndex).map((shot) => ({ shot, imageTask: activeImage(shot) })), q("[data-generate]"));
     };
     q("[data-generate-current]").onclick = () => generateJobs([{ shot: activeShot(), imageTask: activeImage() }], q("[data-generate-current]"));
-    q("[data-close]").onclick = () => { api.removeEventListener?.("progress", onSamplingProgress); api.removeEventListener?.("execution_success", onExecutionSuccess); api.removeEventListener?.("executed", onExecutionSuccess); api.removeEventListener?.("execution_interrupted", onExecutionInterrupted); clearInterval(hardwareTimer); clearTimeout(imageGenerationTimer); save(); root.remove(); node._xiaw = null; };
+    q("[data-close]").onclick = () => { api.removeEventListener?.("progress", onSamplingProgress); api.removeEventListener?.("execution_start", onExecutionStart); api.removeEventListener?.("execution_success", onExecutionSuccess); api.removeEventListener?.("executed", onExecutionSuccess); api.removeEventListener?.("execution_interrupted", onExecutionInterrupted); clearInterval(hardwareTimer); clearTimeout(imageGenerationTimer); save(); root.remove(); node._xiaw = null; };
     api.addEventListener?.("progress", onSamplingProgress);
+    api.addEventListener?.("execution_start", onExecutionStart);
     api.addEventListener?.("execution_success", onExecutionSuccess);
     api.addEventListener?.("executed", onExecutionSuccess);
     api.addEventListener?.("execution_interrupted", onExecutionInterrupted);
-    imageGenerationStartedAt = Math.max(0, Number(state.generationProgress.imageStartedAt) || 0);
-    imageGenerationElapsedMs = Math.max(0, Number(state.generationProgress.imageElapsedMs) || 0);
+    const resumableGeneration = /准备|采样|生成中|卸载资源/.test(state.generationProgress.title);
+    const resetStoppedDuration = /等待生成|已停止/.test(state.generationProgress.title);
+    imageGenerationStartedAt = resumableGeneration ? Math.max(0, Number(state.generationProgress.imageStartedAt) || 0) : 0;
+    if (!resumableGeneration) state.generationProgress.imageStartedAt = 0;
+    imageGenerationElapsedMs = resetStoppedDuration ? 0 : Math.max(0, Number(state.generationProgress.imageElapsedMs) || 0);
+    if (resetStoppedDuration) state.generationProgress.imageElapsedMs = 0;
     setHeaderProgress(state.generationProgress.title, state.generationProgress.percent, state.generationProgress.batchText);
     if (imageGenerationStartedAt) runImageDurationClock();
     syncHardwareMonitor();
     applyNodeProtocol(node, state);
     queueMicrotask(() => {
         applyModelGroupSwitch(node, state.modelProfile);
-        if (/准备|采样|生成中|卸载资源/.test(state.generationProgress.title)) {
+        applySavedLoraSwitches(state.modelProfile);
+        renderLoraSwitches();
+        if (resumableGeneration) {
             api.fetchApi(`/queue?t=${Date.now()}`).then((response) => response.ok ? response.json() : null).then((queue) => {
                 const busy = (Array.isArray(queue?.queue_running) && queue.queue_running.length) || (Array.isArray(queue?.queue_pending) && queue.queue_pending.length);
                 if (!busy && root.isConnected && !running) {
