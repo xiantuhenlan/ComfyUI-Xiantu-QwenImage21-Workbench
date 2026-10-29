@@ -18,6 +18,22 @@ const STYLE_ID = "xiantu-storyboard-dashboard-style";
 const HAND_NEGATIVE = "missing fingers, extra fingers, fused fingers, badly drawn hands, malformed hands, wrong number of fingers";
 const MAX_ASSETS = 16;
 
+async function waitForPromptCompletion(promptId) {
+    const expectedId = String(promptId || "");
+    if (!expectedId) throw new Error("任务编号为空，无法等待生成完成");
+    while (true) {
+        const response = await api.fetchApi(`/history/${encodeURIComponent(expectedId)}`);
+        if (response.ok) {
+            const history = await response.json();
+            const entry = history?.[expectedId] || Object.values(history || {})[0];
+            const status = entry?.status || {};
+            if (status.completed === true || status.status_str === "success") return entry;
+            if (status.status_str === "error") throw new Error("当前任务生成失败，已停止后续任务");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+}
+
 function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -280,67 +296,8 @@ function createDashboard(node, config) {
     q("[data-export-json]").onclick = () => { const blob = new Blob([serialized()], { type: "application/json;charset=utf-8" }), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${state.project.title || "storyboard"}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); setStatus("已导出 JSON。"); };
     q("[data-copy-json]").onclick = async () => { try { await navigator.clipboard.writeText(serialized()); setStatus("已复制 JSON。"); } catch { setStatus("复制失败，请在 JSON 数据页手动复制。", true); } };
     q("[data-send-downstream]").onclick = () => { persist(); setStatus("分镜数据已写入节点输出，可提交后续工作流。"); };
-    async function queueAssets(assetIds) {
-        if (busy || !assetIds.length) return;
-        const original = state.active_asset_task_id || "";
-        const allAssets = [...state.characters, ...state.scenes, ...state.props];
-        const jobs = assetIds.map((id) => allAssets.find((asset) => asset.id === id)).filter(Boolean);
-        busy = true;
-        try {
-            for (let index = 0; index < jobs.length; index += 1) {
-                const asset = jobs[index];
-                state.active_asset_task_id = asset.id;
-                persist("当前分镜");
-                setStatus(`正在发送资产 ${asset.id}｜${asset.name || "未命名"}（${index + 1}/${jobs.length}）…`);
-                // State and widget values are updated synchronously. Waiting for a paint frame
-                // here made batch submission stop when Chrome was hidden or Windows was locked.
-                const prompt = await app.graphToPrompt();
-                const response = await api.queuePrompt(0, prompt);
-                if (!response?.prompt_id) throw new Error("没有返回任务编号");
-            }
-            setStatus(`已提交 ${jobs.length} 个资产图片任务，生成后会自动回填资产卡。`);
-        } catch (error) {
-            setStatus(`资产提交失败：${String(error?.message || error)}`, true);
-        } finally {
-            state.active_asset_task_id = original;
-            persist();
-            busy = false;
-            renderAll();
-        }
-    }
-    async function queueShots(ids) {
-        if (busy || !ids.length) return;
-        const original = state.active_shot_id;
-        const originalMode = modeWidget?.value || "当前分镜";
-        const originalTask = current().active_image_task_id || "";
-        const jobs = ids.flatMap((id) => {
-            const shot = state.shots.find((item) => item.id === id);
-            return shot ? imageTasksForShot(shot).map((task) => ({ shot, task })) : [];
-        });
-        busy = true;
-        try {
-            for (let index = 0; index < jobs.length; index += 1) {
-                const { shot, task } = jobs[index];
-                state.active_shot_id = shot.id;
-                shot.active_image_task_id = task.task_id;
-                shot.status = "已提交";
-                persist("当前分镜");
-                setStatus(`正在发送 ${shot.title} · ${task.label}（${index + 1}/${jobs.length}）…`);
-                const prompt = await app.graphToPrompt();
-                const response = await api.queuePrompt(0, prompt);
-                if (!response?.prompt_id) throw new Error("没有返回任务编号");
-            }
-            setStatus(`已提交 ${jobs.length} 个资产图片任务。`);
-        } catch (error) {
-            setStatus(`提交失败：${String(error?.message || error)}`, true);
-        } finally {
-            state.active_shot_id = state.shots.some((shot) => shot.id === original) ? original : state.shots[0].id;
-            current().active_image_task_id = originalTask;
-            persist(originalMode);
-            busy = false;
-            renderAll();
-        }
-    }
+    async function queueAssets(assetIds) { if (busy || !assetIds.length) return; const original = state.active_asset_task_id || ""; const allAssets = [...state.characters, ...state.scenes, ...state.props]; const jobs = assetIds.map((id) => allAssets.find((asset) => asset.id === id)).filter(Boolean); busy = true; try { for (let index = 0; index < jobs.length; index += 1) { const asset = jobs[index]; state.active_asset_task_id = asset.id; persist("当前分镜"); setStatus(`正在发送资产 ${asset.id}｜${asset.name || "未命名"}（${index + 1}/${jobs.length}）…`); await new Promise((resolve) => requestAnimationFrame(resolve)); const prompt = await app.graphToPrompt(); const response = await api.queuePrompt(0, prompt); if (!response?.prompt_id) throw new Error("没有返回任务编号"); setStatus(`正在生成资产 ${asset.id}｜${asset.name || "未命名"}（${index + 1}/${jobs.length}），完成后才提交下一个…`); await waitForPromptCompletion(response.prompt_id); } setStatus(`已逐个完成 ${jobs.length} 个资产图片任务。`); } catch (error) { setStatus(`资产提交失败：${String(error?.message || error)}`, true); } finally { state.active_asset_task_id = original; persist(); busy = false; renderAll(); } }
+    async function queueShots(ids) { if (busy || !ids.length) return; const original = state.active_shot_id, originalMode = modeWidget?.value || "当前分镜", originalTask = current().active_image_task_id || ""; const jobs = ids.flatMap((id) => { const shot = state.shots.find((item) => item.id === id); return shot ? imageTasksForShot(shot).map((task) => ({ shot, task })) : []; }); busy = true; try { for (let index = 0; index < jobs.length; index += 1) { const { shot, task } = jobs[index]; state.active_shot_id = shot.id; shot.active_image_task_id = task.task_id; shot.status = "已提交"; persist("当前分镜"); setStatus(`正在发送 ${shot.title} · ${task.label}（${index + 1}/${jobs.length}）…`); await new Promise((resolve) => requestAnimationFrame(resolve)); const prompt = await app.graphToPrompt(); const response = await api.queuePrompt(0, prompt); if (!response?.prompt_id) throw new Error("没有返回任务编号"); setStatus(`正在生成 ${shot.title} · ${task.label}（${index + 1}/${jobs.length}），完成后才提交下一个…`); await waitForPromptCompletion(response.prompt_id); } setStatus(`已逐个完成 ${jobs.length} 个资产图片任务。`); } catch (error) { setStatus(`提交失败：${String(error?.message || error)}`, true); } finally { state.active_shot_id = state.shots.some((shot) => shot.id === original) ? original : state.shots[0].id; current().active_image_task_id = originalTask; persist(originalMode); busy = false; renderAll(); } }
     q("[data-generate-current]").onclick = () => { const assets = assetListForTab(); if (!assets) return queueShots([current().id]); const currentAsset = assets.find((asset) => asset.id === state.active_asset_task_id) || assets[0]; if (!currentAsset) return setStatus("当前资产列表为空。", true); queueAssets([currentAsset.id]); };
     q("[data-generate-selected]").onclick = () => { const assets = assetListForTab(); if (!assets) { const ids = state.shots.filter((shot) => shot.selected).map((shot) => shot.id); if (!ids.length) return setStatus("请先勾选分镜。", true); return queueShots(ids); } const ids = assets.filter((asset) => asset.selected).map((asset) => asset.id); if (!ids.length) return setStatus("请先勾选资产卡。", true); queueAssets(ids); };
     q("[data-generate-from]").onclick = () => { const assets = assetListForTab(); if (!assets) return queueShots(state.shots.slice(currentIndex()).map((shot) => shot.id)); const index = Math.max(0, assets.findIndex((asset) => asset.id === state.active_asset_task_id)); queueAssets(assets.slice(index).map((asset) => asset.id)); };

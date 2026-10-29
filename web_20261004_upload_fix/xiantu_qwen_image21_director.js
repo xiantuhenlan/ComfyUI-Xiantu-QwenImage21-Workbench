@@ -824,24 +824,19 @@ function createDirectorUi(node) {
         if (queueBusy || !shots.length) return;
         persist(); const originalShotId = activeShotId; queueBusy = true; renderShots();
         try {
-            const queuedShots = [];
             for (let index = 0; index < shots.length; index += 1) {
                 const shot = storyboard.shots.find((item) => item.id === shots[index].id); if (!shot) continue;
                 activeShotId = shot.id; storyboard.activeShotId = shot.id; workbench = clone(shot.workbench); loadMode(workbench.activeMode); persist();
                 setQueueStatus(`正在提交 ${shotLabel(storyboard.shots.indexOf(shot))}（${index + 1}/${shots.length}）…`);
+                await new Promise((resolve) => requestAnimationFrame(resolve));
                 const prompt = await app.graphToPrompt();
                 ensureSamplerLatent(prompt, isTextMode(activeMode));
                 const result = await api.queuePrompt(0, prompt);
                 if (!result?.prompt_id) throw new Error(`${shotLabel(storyboard.shots.indexOf(shot))} 没有返回任务编号`);
-                queuedShots.push({ shot, promptId: String(result.prompt_id) });
+                setQueueStatus(`正在生成 ${shotLabel(storyboard.shots.indexOf(shot))}（${index + 1}/${shots.length}），完成后自动继续下一张…`);
+                await waitForPromptCompletion(result.prompt_id);
             }
-            setQueueStatus(`已提交 ${queuedShots.length} 张图片，ComfyUI 将在后台依次生成。`);
-            for (let index = 0; index < queuedShots.length; index += 1) {
-                const item = queuedShots[index];
-                setQueueStatus(`后台生成中：${shotLabel(storyboard.shots.indexOf(item.shot))}（${index + 1}/${queuedShots.length}）`);
-                await waitForPromptCompletion(item.promptId);
-            }
-            setQueueStatus(`已按顺序完成 ${queuedShots.length} 张图片。`);
+            setQueueStatus(`已按顺序完成 ${shots.length} 张图片。`);
         } catch (error) {
             setQueueStatus(`提交失败：${String(error?.message || error)}`, true);
         } finally {

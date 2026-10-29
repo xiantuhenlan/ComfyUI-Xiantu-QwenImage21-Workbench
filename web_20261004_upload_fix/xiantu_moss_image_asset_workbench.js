@@ -2002,21 +2002,20 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
         currentGenerateButton.disabled = true;
         if (button === currentGenerateButton) currentGenerateButton.textContent = "正在生成…";
         try {
+            let completedShots = 0;
             const completedPromptIds = [];
-            const queuedJobs = [];
-            // Queue every job before waiting for results. Once submitted, ComfyUI keeps
-            // generating even if this tab is hidden, Chrome is minimized, or Windows locks.
             for (let index = 0; index < jobs.length; index += 1) {
                 const { shot, imageTask } = jobs[index];
-                if (generationInterrupted) throw new Error("生成已停止");
                 generationBatch = { index, total: jobs.length, promptId: "" };
-                setHeaderProgress("正在提交任务", index / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
+                startImageDuration();
+                setHeaderProgress("准备当前图片", index / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
                 state.activeShotId = shot.id;
                 shot.activeImageId = imageTask.id;
                 syncFields(); render(); showResult(imageTask); save();
-                const progressText = `正在提交图片 ${index + 1}/${jobs.length}`;
+                const progressText = `图片 ${index + 1}/${jobs.length}：生成中`;
                 status.textContent = progressText;
                 localStatus.textContent = progressText;
+                await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 applyModelGroupSwitch(node, state.modelProfile);
                 const workflow = await app.graphToPrompt();
                 if (!randomizeWorkflowSeeds(workflow)) console.warn("[图片素材工作台] 当前工作流未找到可随机化的采样种子输入");
@@ -2026,17 +2025,8 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                 setHeaderProgress("采样生成中", index / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
                 completedPromptIds.push(String(queued.prompt_id));
                 imageTask.lastPromptId = String(queued.prompt_id);
-                queuedJobs.push({ shot, imageTask, promptId: String(queued.prompt_id) });
                 save();
-            }
-            status.textContent = `已提交 ${queuedJobs.length} 张图片，ComfyUI 正在后台依次生成`;
-            localStatus.textContent = status.textContent;
-            setHeaderProgress("后台生成中", 0, `图片 0/${queuedJobs.length}`);
-            for (let index = 0; index < queuedJobs.length; index += 1) {
-                const { imageTask, promptId } = queuedJobs[index];
-                generationBatch = { index, total: queuedJobs.length, promptId };
-                startImageDuration();
-                const history = await waitForPrompt(promptId);
+                const history = await waitForPrompt(queued.prompt_id);
                 const images = outputImages(history);
                 if (!images.length) throw new Error(`图片 ${index + 1} 完成，但工作流没有输出图片文件`);
                 imageTask.outputs = Array.isArray(imageTask.outputs) ? imageTask.outputs : [];
@@ -2054,14 +2044,16 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                 setHeaderProgress("图片生成完成", (index + 1) / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
                 showResult(imageTask);
                 render(); save();
+                const shotCompleted = index === jobs.length - 1 || jobs[index + 1].shot.id !== shot.id;
+                if (shotCompleted) {
+                    completedShots += 1;
+                    if (index < jobs.length - 1 && completedShots % state.cleanupSettings.every === 0) {
+                        setHeaderProgress("卸载资源", (index + 1) / jobs.length * 100, `已完成 ${completedShots} 个分镜`);
+                        await cleanupResources();
+                    }
+                }
             }
             for (const promptId of completedPromptIds) await syncPromptHistory(promptId);
-            const completedShots = new Set(jobs.map((job) => job.shot.id)).size;
-            const cleanupEnabled = state.cleanupSettings.cache || state.cleanupSettings.vram || state.cleanupSettings.models;
-            if (cleanupEnabled && completedShots >= state.cleanupSettings.every) {
-                setHeaderProgress("卸载资源", 100, `已完成 ${completedShots} 个分镜`);
-                await cleanupResources();
-            }
             state.activeShotId = originalShot;
             const restoredShot = activeShot();
             if (restoredShot.images.some((image) => image.id === originalImage)) restoredShot.activeImageId = originalImage;
@@ -2108,7 +2100,6 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
         q("[data-generate]").textContent = "正在停止…";
         q("[data-generate-current]").disabled = true;
         try {
-            await api.fetchApi("/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clear: true }) });
             await api.fetchApi("/interrupt", { method: "POST" });
         } catch (error) {
             console.warn("图片工作台停止生成请求失败", error);
