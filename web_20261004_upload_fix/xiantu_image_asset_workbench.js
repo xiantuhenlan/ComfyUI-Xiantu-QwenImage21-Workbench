@@ -733,13 +733,6 @@ const normalizeState = (raw, projectName) => {
         activeShotId: String(state.activeShotId || ""),
     };
     if (!state.shots.some((shot) => shot.id === state.activeShotId)) state.activeShotId = state.shots[0].id;
-    for (const shot of state.shots) {
-        for (const image of shot.images || []) {
-            if (image.qwenEditPreset === "multi_person" && image.prompt.includes("人物 1 默认位于画面左侧")) {
-                image.prompt = qwen21EditPrompt(image);
-            }
-        }
-    }
     return state;
 };
 
@@ -1484,7 +1477,7 @@ function createWorkbench(node) {
         optionHost.innerHTML = options.map((option) => `<button class="${option[0] === selectedOption?.[0] ? "active" : ""}" data-krea-edit-option="${esc(option[0])}" title="${esc(option[2])}">${esc(option[1])}</button>`).join("");
         qa("[data-krea-edit-option]").forEach((button) => button.onclick = () => { image.kreaEditOption = button.dataset.kreaEditOption; image.prompt = krea2EditPrompt(image); image.negative = KREA2_COMMON_NEGATIVE; promptTab = "positive"; syncFields(); renderPromptTabs(); renderKreaControls(); save(); applyModelGroupSwitch(node, state.modelProfile, true, true); });
         q("[data-krea-text-description]").textContent = KREA2_TEXT_PRESET.description;
-        q("[data-krea-text-free]").onclick = () => { if (!image.prompt.trim()) image.prompt = KREA2_TEXT_PRESET.demo; image.negative = KREA2_COMMON_NEGATIVE; promptTab = "positive"; syncFields(); renderPromptTabs(); save(); applyModelGroupSwitch(node, state.modelProfile, true, true); };
+        q("[data-krea-text-free]").onclick = () => { promptTab = "positive"; syncFields(); renderPromptTabs(); save(); applyModelGroupSwitch(node, state.modelProfile, true, true); };
     };
     const enforceCapabilities = () => {
         const canEdit = state.modelProfile === "Qwen Image 2.1" || state.modelProfile === "Krea-2";
@@ -2370,13 +2363,19 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
     const generateJobs = async (jobs, triggerButton) => {
         if (running) return;
         if (!jobs.length) { q("[data-image-status]").textContent = "当前没有可生成的分镜"; return; }
+        const missingPrompt = jobs.find(({ imageTask }) => !String(imageTask.prompt || "").trim());
+        if (missingPrompt) {
+            await workbenchAlert(`“${missingPrompt.shot.title || "当前分镜"}”的正向提示词为空，请先填写提示词。`, "提示词为空");
+            return;
+        }
         if (["Qwen Image 2.1", "Krea-2"].includes(state.modelProfile) && state.generationMode === "图生图") {
             jobs.forEach(({ imageTask }) => {
                 const isKrea = state.modelProfile === "Krea-2";
                 const preset = isKrea ? (KREA2_EDIT_PRESET_MAP.get(imageTask.kreaEditPreset) || KREA2_EDIT_PRESET_MAP.get("free_edit")) : (QWEN21_EDIT_PRESET_MAP.get(imageTask.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit"));
                 imageTask.referenceImages = orderQwenReferences(preset, imageTask.referenceImages);
-                imageTask.prompt = isKrea ? krea2EditPrompt(imageTask) : qwen21EditPrompt(imageTask);
-                imageTask.negative = isKrea ? KREA2_COMMON_NEGATIVE : (preset?.negative || QWEN21_COMMON_NEGATIVE);
+                // Preserve the prompt currently shown in the editor. Selecting a preset or
+                // changing its reference images already refreshes the generated prompt; doing
+                // it again here silently discarded any user edits immediately before queueing.
             });
             const invalid = jobs.find(({ imageTask }) => { const preset = state.modelProfile === "Krea-2" ? (KREA2_EDIT_PRESET_MAP.get(imageTask.kreaEditPreset) || KREA2_EDIT_PRESET_MAP.get("free_edit")) : (QWEN21_EDIT_PRESET_MAP.get(imageTask.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit")); const required = (preset?.slots || []).filter((slot) => slot[2]); return required.some((slot, index) => !imageTask.referenceImages.some((record, recordIndex) => record.slotKey === slot[0] || (!record.slotKey && recordIndex === index))); });
             if (invalid) {

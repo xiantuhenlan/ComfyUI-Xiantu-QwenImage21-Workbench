@@ -787,6 +787,8 @@ function createWorkbench(node) {
     const modeWidget = node.widgets?.find((widget) => widget.name === "generation_mode");
     const stateWidget = node.widgets?.find((widget) => widget.name === "workbench_state");
     let state = normalizeState(stateWidget?.value || node.properties?.xiantuMossImageAssetState, projectWidget?.value);
+    state.modelProfile = "MOSS";
+    state.generationMode = "文生图";
     let running = false;
     let generationInterrupted = false;
     let libraryAssets = [];
@@ -988,7 +990,8 @@ function createWorkbench(node) {
         typography: { positive: "专业文字设计，文字内容准确可读，字形清晰，层级明确，版式平衡，留白合理，商业设计品质", negative: "错字，乱码，缺字，文字重叠，字形扭曲，排版拥挤，低清晰度，水印" },
     };
     const save = () => {
-        state.modelProfile = q("[data-model-profile]").value;
+        state.modelProfile = "MOSS";
+        state.generationMode = "文生图";
         if (projectWidget) projectWidget.value = state.projectName;
         if (modelWidget) modelWidget.value = state.modelProfile;
         if (modeWidget) modeWidget.value = state.generationMode;
@@ -1397,7 +1400,10 @@ function createWorkbench(node) {
             if (/\.(?:png|jpe?g|webp|bmp)$/i.test(name)) found.push({ name, subfolder: String(value.subfolder || ""), type: String(value.type || "output") });
             Object.values(value).forEach(visit);
         };
-        visit(history?.outputs || history);
+        const outputs = history?.outputs;
+        const outputNodeIds = Array.isArray(history?.prompt?.[4]) ? history.prompt[4].map(String) : [];
+        if (outputs && outputNodeIds.length) outputNodeIds.forEach((outputNodeId) => visit(outputs[outputNodeId]));
+        else visit(outputs || history);
         return [...new Map(found.map((item) => [`${item.type}/${item.subfolder}/${item.name}`, item])).values()];
     };
     const queuedWorkbenchState = (record) => {
@@ -1406,20 +1412,22 @@ function createWorkbench(node) {
         if (queuedNode?.class_type !== NODE) return null;
         try { return JSON.parse(String(queuedNode.inputs?.workbench_state || "{}")); } catch { return null; }
     };
-    const ingestHistoryOutput = (record, promptId, allowReviveDeleted = false) => {
+    const queuedHistoryTarget = (record) => {
         const queuedState = queuedWorkbenchState(record);
-        const images = outputImages(record);
-        if (!queuedState || !images.length) return false;
+        if (!queuedState) return null;
         const queuedShot = (queuedState.shots || []).find((item) => item?.id === queuedState.activeShotId);
         const shot = state.shots.find((item) => item.id === queuedState.activeShotId);
         const imageTask = shot?.images?.find((item) => item.id === queuedShot?.activeImageId);
-        if (!imageTask) return false;
+        return imageTask ? { queuedState, queuedShot, shot, imageTask } : null;
+    };
+    const ingestHistoryOutput = (record, promptId) => {
+        const target = queuedHistoryTarget(record);
+        const images = outputImages(record);
+        if (!target || !images.length) return false;
+        const { imageTask } = target;
         const output = images.at(-1);
         const outputKey = fileRecordKey(output);
-        if ((imageTask.deletedOutputs || []).includes(outputKey)) {
-            if (!allowReviveDeleted) return false;
-            imageTask.deletedOutputs = (imageTask.deletedOutputs || []).filter((key) => key !== outputKey);
-        }
+        if ((imageTask.deletedOutputs || []).includes(outputKey)) return false;
         imageTask.outputs = Array.isArray(imageTask.outputs) ? imageTask.outputs : [];
         let savedOutput = imageTask.outputs.find((item) => fileRecordKey(item) === fileRecordKey(output));
         if (!savedOutput) {
@@ -1431,11 +1439,11 @@ function createWorkbench(node) {
         imageTask.lastOutput = savedOutput;
         return true;
     };
-    const syncPromptHistory = async (promptId, allowReviveDeleted = false) => {
+    const syncPromptHistory = async (promptId) => {
         const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}?t=${Date.now()}`);
         if (!response.ok) return false;
         const record = (await response.json())?.[promptId];
-        if (!record || !ingestHistoryOutput(record, promptId, allowReviveDeleted)) return false;
+        if (!record || String(record?.status?.status_str || "") !== "success" || !ingestHistoryOutput(record, promptId)) return false;
         syncFields(); render(); save();
         return true;
     };
@@ -1446,20 +1454,32 @@ function createWorkbench(node) {
         let restored = false;
         for (const [promptId, record] of entries) {
             if (String(record?.status?.status_str || "") !== "success") continue;
-            if (ingestHistoryOutput(record, promptId)) { restored = true; continue; }
-            const latestOutput = outputImages(record).at(-1);
-            if (!latestOutput) continue;
-            try {
-                const exists = await fetch(fileUrl(latestOutput), { method: "HEAD" });
-                if (exists.ok && ingestHistoryOutput(record, promptId, true)) restored = true;
-            } catch {}
+            const target = queuedHistoryTarget(record);
+            if (!target || String(target.imageTask.lastPromptId || "") !== String(promptId)) continue;
+            if (ingestHistoryOutput(record, promptId)) restored = true;
         }
         if (restored) { syncFields(); render(); save(); }
+    };
+    const promptHistorySyncs = new Map();
+    const syncPromptHistoryAfterExecution = (promptId) => {
+        const key = String(promptId || "");
+        if (!key) return Promise.resolve(false);
+        if (promptHistorySyncs.has(key)) return promptHistorySyncs.get(key);
+        const pending = (async () => {
+            for (let attempt = 0; attempt < 40 && root.isConnected; attempt += 1) {
+                try { if (await syncPromptHistory(key)) return true; }
+                catch (error) { if (attempt === 39) console.warn("MOSS 图片生成完成后同步工作台失败", error); }
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+            return false;
+        })().finally(() => promptHistorySyncs.delete(key));
+        promptHistorySyncs.set(key, pending);
+        return pending;
     };
     const onExecutionSuccess = (event) => {
         const detail = event?.detail || {};
         const promptId = String(detail.prompt_id ?? detail.promptId ?? "");
-        if (promptId) syncPromptHistory(promptId).catch((error) => console.warn("图片生成完成后同步工作台失败", error));
+        if (promptId) syncPromptHistoryAfterExecution(promptId);
     };
     const uploadReferenceFile = async (file) => {
         const form = new FormData();
@@ -1960,20 +1980,10 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
     const generateJobs = async (jobs, triggerButton) => {
         if (running) return;
         if (!jobs.length) { q("[data-image-status]").textContent = "当前没有可生成的分镜"; return; }
-        if (state.modelProfile === "Qwen Image 2.1" && state.generationMode === "图生图") {
-            jobs.forEach(({ imageTask }) => {
-                const preset = QWEN21_EDIT_PRESET_MAP.get(imageTask.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit");
-                imageTask.referenceImages = orderQwenReferences(preset, imageTask.referenceImages);
-                imageTask.prompt = qwen21EditPrompt(imageTask);
-                imageTask.negative = preset?.negative || QWEN21_COMMON_NEGATIVE;
-            });
-            const invalid = jobs.find(({ imageTask }) => { const preset = QWEN21_EDIT_PRESET_MAP.get(imageTask.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit"); const required = (preset?.slots || []).filter((slot) => slot[2]); return required.some((slot, index) => !imageTask.referenceImages.some((record, recordIndex) => record.slotKey === slot[0] || (!record.slotKey && recordIndex === index))); });
-            if (invalid) {
-                const preset = QWEN21_EDIT_PRESET_MAP.get(invalid.imageTask.qwenEditPreset) || QWEN21_EDIT_PRESET_MAP.get("free_edit");
-                const missing = (preset.slots || []).filter((slot) => slot[2] && !invalid.imageTask.referenceImages.some((record) => record.slotKey === slot[0])).map((slot) => slot[1]).join("、");
-                await workbenchAlert(`“${preset.label}”缺少必选参考图：${missing}。请在左侧对应槽位直接上传。`, "参考图不完整");
-                return;
-            }
+        const missingPrompt = jobs.find(({ imageTask }) => !String(imageTask.prompt || "").trim());
+        if (missingPrompt) {
+            await workbenchAlert(`“${missingPrompt.shot.title || "当前分镜"}”的正向提示词为空，请先填写提示词。`, "提示词为空");
+            return;
         }
         jobs = jobs.flatMap((job) => Array.from({ length: Math.max(1, Math.min(10, Number(job.imageTask.drawCount) || 1)) }, () => job));
         generationBatch = { index: 0, total: jobs.length, promptId: "" };
@@ -2043,7 +2053,7 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                     }
                 }
             }
-            for (const promptId of completedPromptIds) await syncPromptHistory(promptId, true);
+            for (const promptId of completedPromptIds) await syncPromptHistory(promptId);
             state.activeShotId = originalShot;
             const restoredShot = activeShot();
             if (restoredShot.images.some((image) => image.id === originalImage)) restoredShot.activeImageId = originalImage;
@@ -2101,9 +2111,10 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
         return generateJobs(state.shots.slice(startIndex).map((shot) => ({ shot, imageTask: activeImage(shot) })), q("[data-generate]"));
     };
     q("[data-generate-current]").onclick = () => generateJobs([{ shot: activeShot(), imageTask: activeImage() }], q("[data-generate-current]"));
-    q("[data-close]").onclick = () => { api.removeEventListener?.("progress", onSamplingProgress); api.removeEventListener?.("execution_success", onExecutionSuccess); api.removeEventListener?.("execution_interrupted", onExecutionInterrupted); clearInterval(hardwareTimer); clearTimeout(imageGenerationTimer); save(); root.remove(); node._xmossaw = null; };
+    q("[data-close]").onclick = () => { api.removeEventListener?.("progress", onSamplingProgress); api.removeEventListener?.("execution_success", onExecutionSuccess); api.removeEventListener?.("executed", onExecutionSuccess); api.removeEventListener?.("execution_interrupted", onExecutionInterrupted); clearInterval(hardwareTimer); clearTimeout(imageGenerationTimer); save(); root.remove(); node._xmossaw = null; };
     api.addEventListener?.("progress", onSamplingProgress);
     api.addEventListener?.("execution_success", onExecutionSuccess);
+    api.addEventListener?.("executed", onExecutionSuccess);
     api.addEventListener?.("execution_interrupted", onExecutionInterrupted);
     imageGenerationStartedAt = Math.max(0, Number(state.generationProgress.imageStartedAt) || 0);
     imageGenerationElapsedMs = Math.max(0, Number(state.generationProgress.imageElapsedMs) || 0);
