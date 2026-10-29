@@ -5,10 +5,12 @@ export const KREA2_TEXT_PRESET = {
     label: "自由编辑",
     description: "用自然语言描述想看到的画面；先写核心想法，再逐步补充风格、构图、光线和材质。",
     prompt: "",
-    demo: "A quiet late-night noodle shop on a narrow Tokyo side street, one customer seated at the counter, rain reflections on dark pavement, warm tungsten light spilling through the doorway, candid 35mm film photography, restrained colors, subtle grain, intimate atmosphere.",
+    demo: "",
 };
 
-const edit = (description, prompt, demo, options) => ({ description, prompt, demo, ...(options ? { options } : {}) });
+// Krea-2 uses concise user-authored text. Reference images are passed separately by
+// the backend vision input, so the UI must not expose or apply built-in prompt/demo text.
+const edit = (description, _prompt, _demo, options) => ({ description, prompt: "", demo: "", ...(options ? { options } : {}) });
 
 export const KREA2_EDIT_CONTENT = {
     free_edit: edit(
