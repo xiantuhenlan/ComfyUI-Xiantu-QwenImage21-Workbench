@@ -1,0 +1,5 @@
+{
+  "说明": "实际修改前由 tools/node_integrity.py begin 自动生成 change_scope.json；不要手工伪造。",
+  "示例命令": "python tools/node_integrity.py begin --reason 修改SIGMAS中转 --allow-node XiantuSigmasConditionalRelay --allow-feature XiantuSigmasConditionalRelay::backend::relay",
+  "修改后命令": "python tools/node_integrity.py verify-scope"
+}

@@ -1,6 +1,6 @@
 [project]
 name = "xiantu-qwen-image21-workbench"
-version = "0.3.6"
+version = "0.3.7"
 description = "Qwen Image 2.1, storyboard and digital-human production workbenches for ComfyUI."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -20,4 +20,4 @@ Documentation = "https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Work
 
 [tool.comfy]
 PublisherId = "xiantuhenlan"
-DisplayName = "闲兔 Qwen Image 2.1 工作台"
+DisplayName = "XiantuQwenImage21Director(闲兔导演台插件)"

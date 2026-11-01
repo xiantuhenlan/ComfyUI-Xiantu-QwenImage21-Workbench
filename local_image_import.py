@@ -38,6 +38,7 @@ _IMAGE_EXTENSIONS = {
 }
 _IMPORT_SUBFOLDER = "xiantu_qwen_image21"
 _VIDEO_EDITOR_SUBFOLDER = "xiantu_video_editor"
+_MAX_VIDEO_EDITOR_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 _MEDIA_EXTENSIONS = _IMAGE_EXTENSIONS | {
     ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
     ".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".wma",
@@ -676,6 +677,7 @@ async def upload_video_editor_media(request):
     target_dir.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     temp_path = None
+    received_bytes = 0
     try:
         with tempfile.NamedTemporaryFile(dir=target_dir, suffix=suffix, delete=False) as handle:
             temp_path = Path(handle.name)
@@ -683,6 +685,9 @@ async def upload_video_editor_media(request):
                 chunk = await field.read_chunk(size=1024 * 1024)
                 if not chunk:
                     break
+                received_bytes += len(chunk)
+                if received_bytes > _MAX_VIDEO_EDITOR_UPLOAD_BYTES:
+                    raise OverflowError("素材文件不能超过 8 GB")
                 digest.update(chunk)
                 handle.write(chunk)
         safe_stem = "".join(char if char.isalnum() or char in "-_" else "_" for char in Path(original_name).stem).strip("_") or "media"
@@ -692,6 +697,10 @@ async def upload_video_editor_media(request):
             temp_path.unlink(missing_ok=True)
         else:
             os.replace(temp_path, target)
+    except OverflowError as error:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        return _error(str(error), status=413)
     except OSError as error:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -906,10 +915,14 @@ async def finalize_video_name(request):
             await asyncio.sleep(0.25)
         except OSError as error:
             return _error(f"最终视频改名失败：{error}", status=500)
-    for sibling in target.parent.glob(f"{stable_stem}_?????*"):
+    intermediate_pattern = re.compile(
+        rf"^{re.escape(stable_stem)}_\d{{5}}(?:-audio)?\.(?:mp4|webm|mov|mkv|avi|m4v|png)$",
+        re.IGNORECASE,
+    )
+    for sibling in target.parent.iterdir():
         if sibling == target or not sibling.is_file():
             continue
-        if sibling.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v", ".png"}:
+        if not intermediate_pattern.fullmatch(sibling.name):
             continue
         try:
             sibling.unlink()
@@ -989,7 +1002,8 @@ async def video_editor_hardware(_request):
     except Exception:
         pass
     try:
-        completed = subprocess.run(
+        completed = await asyncio.to_thread(
+            subprocess.run,
             ["nvidia-smi", "--query-gpu=memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=3, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
         )
@@ -1000,6 +1014,17 @@ async def video_editor_hardware(_request):
     except Exception:
         pass
     return web.json_response(data)
+
+
+@PromptServer.instance.routes.get("/xiantu/video-editor/latent-cache-status")
+async def video_editor_latent_cache_status(request):
+    """Check a hashed latent key without exposing or accepting a file path."""
+    cache_key = str(request.query.get("key") or "")[:2048]
+    if not cache_key:
+        return web.json_response({"exists": False})
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
+    cache_path = Path(folder_paths.get_temp_directory()) / "xiantu_video_latent_cache" / f"{digest}.pt"
+    return web.json_response({"exists": cache_path.is_file() and cache_path.stat().st_size > 0})
 
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/cleanup")
@@ -1049,13 +1074,177 @@ async def video_editor_open_output(_request):
         return _error(f"打开输出目录失败：{error}", status=500)
 
 
+def _video_editor_ffmpeg():
+    executable = shutil.which("ffmpeg")
+    if executable:
+        return executable
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as error:
+        raise OSError("未找到 FFmpeg") from error
+
+
+def _video_editor_output_path(record, output_root):
+    if not isinstance(record, dict):
+        raise ValueError("时间线片段缺少输出文件记录")
+    name = Path(str(record.get("filename") or "")).name
+    subfolder = str(record.get("subfolder") or "").replace("\\", "/").strip("/")
+    candidate = (output_root / subfolder / name).resolve()
+    try:
+        candidate.relative_to(output_root)
+    except ValueError as error:
+        raise ValueError("剪辑文件超出输出目录") from error
+    if not candidate.is_file():
+        raise ValueError(f"找不到剪辑文件：{name}")
+    return candidate
+
+
+def _video_editor_has_audio(ffmpeg, path):
+    sibling = Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffprobe = shutil.which("ffprobe") or (str(sibling) if sibling.is_file() else None)
+    if not ffprobe:
+        completed = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(path)],
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+        )
+        probe_text = f"{completed.stdout}\n{completed.stderr}"
+        return any("Audio:" in line and "Stream #" in line for line in probe_text.splitlines())
+    completed = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+    )
+    return completed.returncode == 0 and "audio" in completed.stdout.lower()
+
+
+def _render_video_editor_timeline(timeline):
+    video_items = timeline.get("video") if isinstance(timeline, dict) else None
+    audio_items = timeline.get("audio") if isinstance(timeline, dict) else None
+    if not isinstance(video_items, list) or not video_items:
+        raise ValueError("时间线没有可导出的视频片段")
+    if len(video_items) > 200 or (isinstance(audio_items, list) and len(audio_items) > 400):
+        raise ValueError("时间线片段过多")
+    output_root = Path(folder_paths.get_output_directory()).resolve()
+    ffmpeg = _video_editor_ffmpeg()
+    input_paths = []
+    input_indexes = {}
+
+    def input_index(record):
+        path = _video_editor_output_path(record, output_root)
+        key = os.path.normcase(str(path))
+        if key not in input_indexes:
+            input_indexes[key] = len(input_paths)
+            input_paths.append(path)
+        return input_indexes[key], path
+
+    width = max(32, min(7680, int(timeline.get("width") or 1280)))
+    height = max(32, min(4320, int(timeline.get("height") or 720)))
+    width -= width % 2
+    height -= height % 2
+    fps = max(1, min(120, int(timeline.get("fps") or 24)))
+    filters = []
+    video_labels = []
+    video_durations = []
+    video_overlaps = []
+    for index, item in enumerate(video_items):
+        source_index, _path = input_index(item.get("record"))
+        start = max(0.0, float(item.get("sourceStart") or 0))
+        duration = max(1 / fps, float(item.get("duration") or 0))
+        overlap = max(0.0, min(duration - 1 / fps, float(item.get("overlap") or 0))) if index else 0.0
+        video_durations.append(duration)
+        video_overlaps.append(overlap)
+        label = f"v{index}"
+        filters.append(
+            f"[{source_index}:v:0]trim=start={start:.6f}:duration={duration:.6f},setpts=PTS-STARTPTS,"
+            f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,settb=AVTB[{label}]"
+        )
+        video_labels.append(f"[{label}]")
+    current_label = "v0"
+    final_duration = video_durations[0]
+    for index in range(1, len(video_labels)):
+        next_label = f"v{index}"
+        output_label = "vout" if index == len(video_labels) - 1 else f"vx{index}"
+        overlap = min(video_overlaps[index], final_duration - 1 / fps)
+        if overlap > 0:
+            offset = max(0.0, final_duration - overlap)
+            filters.append(f"[{current_label}][{next_label}]xfade=transition=fade:duration={overlap:.6f}:offset={offset:.6f}[{output_label}]")
+            final_duration += video_durations[index] - overlap
+        else:
+            filters.append(f"[{current_label}][{next_label}]concat=n=2:v=1:a=0[{output_label}]")
+            final_duration += video_durations[index]
+        current_label = output_label
+    if len(video_labels) == 1:
+        filters.append("[v0]null[vout]")
+
+    audio_labels = []
+    for index, item in enumerate(audio_items if isinstance(audio_items, list) else []):
+        if bool(item.get("muted")):
+            continue
+        source_index, path = input_index(item.get("record"))
+        if not _video_editor_has_audio(ffmpeg, path):
+            continue
+        start = max(0.0, float(item.get("sourceStart") or 0))
+        duration = max(0.01, float(item.get("duration") or 0))
+        timeline_start = max(0.0, float(item.get("timelineStart") or 0))
+        volume = max(0.0, min(4.0, float(item.get("volume") if item.get("volume") is not None else 1)))
+        fade_in = max(0.0, min(duration, float(item.get("fadeIn") or 0)))
+        fade_out = max(0.0, min(duration, float(item.get("fadeOut") or 0)))
+        chain = f"[{source_index}:a:0]atrim=start={start:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS,aresample=48000,volume={volume:.4f}"
+        if fade_in > 0:
+            chain += f",afade=t=in:st=0:d={fade_in:.6f}"
+        if fade_out > 0:
+            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.6f}:d={fade_out:.6f}"
+        delay_ms = int(round(timeline_start * 1000))
+        label = f"a{index}"
+        filters.append(chain + f",adelay={delay_ms}:all=1[{label}]")
+        audio_labels.append(f"[{label}]")
+    if audio_labels:
+        filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0,apad,atrim=duration={final_duration:.6f}[aout]")
+    else:
+        filters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={final_duration:.6f}[aout]")
+
+    target_dir = output_root / "短剧-漫剧" / "合并成品"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while (target_dir / f"剪辑成品-{index:03d}.mp4").exists():
+        index += 1
+    target = target_dir / f"剪辑成品-{index:03d}.mp4"
+    command = [ffmpeg, "-y"]
+    for path in input_paths:
+        command.extend(["-i", str(path)])
+    command.extend([
+        "-filter_complex", ";".join(filters), "-map", "[vout]", "-map", "[aout]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000", "-movflags", "+faststart", "-shortest", str(target),
+    ])
+    completed = subprocess.run(
+        command, capture_output=True, text=True, timeout=7200,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+    )
+    if completed.returncode != 0:
+        raise OSError(completed.stderr[-1200:] or "FFmpeg 返回错误")
+    return web.json_response({
+        "ok": True, "filename": target.name, "subfolder": "短剧-漫剧/合并成品",
+        "type": "output", "duration": final_duration, "edited": True,
+    })
+
+
 @PromptServer.instance.routes.post("/xiantu/video-editor/merge")
 async def video_editor_merge(request):
     try:
         payload = await request.json()
+        timeline = payload.get("timeline") if isinstance(payload, dict) else None
         records = payload.get("videos") if isinstance(payload, dict) else None
     except Exception:
+        timeline = None
         records = None
+    if isinstance(timeline, dict):
+        try:
+            return await asyncio.to_thread(_render_video_editor_timeline, timeline)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            return _error(f"剪辑导出失败：{error}", status=500)
     if not isinstance(records, list) or not records:
         return _error("请先选择要合并的视频")
     paths = []
@@ -1092,7 +1281,8 @@ async def video_editor_merge(request):
             list_file = Path(handle.name)
             for path in paths:
                 handle.write("file '" + str(path).replace("'", "'\\''") + "'\n")
-        completed = subprocess.run(
+        completed = await asyncio.to_thread(
+            subprocess.run,
             [
                 ffmpeg, "-y", "-fflags", "+genpts", "-f", "concat", "-safe", "0",
                 "-i", str(list_file), "-map", "0:v:0", "-map", "0:a?",

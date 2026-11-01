@@ -2,11 +2,24 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 const NODE = "XiantuVideoEditorWorkbench";
+const FUNCTION_TAG = "xiantuFunctionTag";
+const FUNCTION_TAG_LABELS = Object.freeze({ speed: "加速", optimization: "性能优化", sampling: "采样 SIGMAS", model: "模型", lora: "LoRA", custom: "自定义" });
+const readFunctionTag = (item) => {
+    const raw = item?.properties?.[FUNCTION_TAG];
+    if (raw && typeof raw === "object") return { category: String(raw.category || "custom"), label: String(raw.label || ""), note: String(raw.note || "") };
+    return null;
+};
+const functionTagDisplayName = (tag) => {
+    if (!tag) return "已标记";
+    if (tag.category !== "custom") return FUNCTION_TAG_LABELS[tag.category] || tag.label || tag.note || "已标记";
+    const legacyCustomName = tag.note && tag.note !== FUNCTION_TAG_LABELS.custom ? tag.note : "";
+    return tag.label || legacyCustomName || FUNCTION_TAG_LABELS.custom;
+};
 const WORKBENCH_LOGO_URL = new URL("./assets/xiantu-rabbit-logo.png", import.meta.url).href;
 let videoEditorStyleReady = Promise.resolve();
 
 {
-    const styleUrl = new URL("./xiantu_video_editor.css?v=20261027-1", import.meta.url).href;
+    const styleUrl = new URL("./xiantu_video_editor.css?v=20261101-055", import.meta.url).href;
     const link = document.querySelector("link[data-xiantu-video-editor-style]") || document.createElement("link");
     link.rel = "stylesheet";
     link.href = styleUrl;
@@ -206,11 +219,12 @@ const SIMPLE_BLOCKING_PRESETS = [
 ];
 const SIMPLE_ACTIONS = ["自然站立", "坐下交谈", "缓慢行走", "快速奔跑", "回头看", "挥手示意", "蹲下", "跪姿", "指向远方", "战斗准备"];
 const SHEET_COLUMNS = [
-    "序号", "分镜编号", "分镜名", "秒数", "是否继承上一帧", "生成类型（全参考生视频）", "提示词", "图片参数（MAX）",
-    ...Array.from({ length: 9 }, (_, index) => `参考图绝对地址${index + 1}`),
-    ...Array.from({ length: 3 }, (_, index) => `参考视频${index + 1}`),
-    ...Array.from({ length: 3 }, (_, index) => `参考音频${index + 1}`),
-    "宽高比", "分辨率", "保存文件名",
+    "序号", "分镜编号", "分镜名称", "时长（秒）", "是否承接上一分镜", "承接上下文帧数", "生成类型", "提示词", "参考图尺寸",
+    "速度优化作用范围", "采样作用范围", "速度选择", "性能优化选择", "采样 SIGMAS 选择", "采样器（自动匹配）", "LoRA 选择", "LoRA 全局节点",
+    ...Array.from({ length: 9 }, (_, index) => `参考图片绝对路径${index + 1}`),
+    ...Array.from({ length: 3 }, (_, index) => `参考视频绝对路径${index + 1}`),
+    ...Array.from({ length: 3 }, (_, index) => `参考音频绝对路径${index + 1}`),
+    "画面比例", "生成分辨率", "保存文件名",
 ];
 const MODE_LABELS = { text: "文生视频", image: "图生视频", frames: "首尾帧生视频", reference: "全参考生视频" };
 const LABEL_MODES = Object.fromEntries(Object.entries(MODE_LABELS).map(([key, value]) => [value, key]));
@@ -259,10 +273,12 @@ function createWorkbench(node) {
     root.className = "xve-overlay";
     root.tabIndex = -1;
     root.innerHTML = `
-      <section class="xve-app" role="dialog" aria-label="闲兔视频编辑工作台">
+      <section class="xve-app" role="dialog" aria-label="闲兔 漫剧/短剧工作导演台">
         <header class="xve-topbar">
-          <strong class="xve-brand"><img src="${WORKBENCH_LOGO_URL}" alt=""><span>闲兔视频导演台</span></strong>
-          <nav class="xve-model-nav" aria-label="视频模型"><button type="button" class="active" data-model-profile="minimax-h3"><i></i>MiniMax H3</button></nav>
+          <strong class="xve-brand"><img src="${WORKBENCH_LOGO_URL}" alt=""><span>闲兔 漫剧/短剧工作导演台</span></strong>
+          <nav class="xve-model-nav" aria-label="视频模型">
+            <button type="button" class="active" data-model-profile="minimax-h3"><i></i>MiniMax H3</button>
+          </nav>
           <div class="xve-hardware" data-hardware hidden><div class="xve-hardware-stats"><span data-hw-cpu>CPU --</span><span data-hw-memory>内存 --</span><span data-hw-vram>显存 --</span><span data-hw-temp>温度 --</span></div><span class="xve-generation-elapsed" data-generation-elapsed>生成耗时 00:00</span></div>
           <div class="xve-top-progress" data-top-progress hidden>
             <div><b><span data-progress-title>等待生成</span><em data-progress-action></em></b><span data-progress-batch>分镜 0/0</span></div>
@@ -285,6 +301,16 @@ function createWorkbench(node) {
           </div>
         </header>
         <main class="xve-main">
+          <nav class="xve-workflow-nav xve-panel" aria-label="导演台功能导航">
+            <button type="button" data-mode="text"><i>文</i><span>文生视频</span></button>
+            <button type="button" data-mode="image"><i>图</i><span>图生视频</span></button>
+            <button type="button" data-mode="frames"><i>帧</i><span>首尾帧</span></button>
+            <button type="button" class="active" data-mode="reference"><i>参</i><span>多参考生视频</span></button>
+            <hr>
+            <button type="button" class="upcoming" data-workflow-preview="character" aria-disabled="true"><i>角</i><span>角色替换</span></button>
+            <button type="button" class="upcoming" data-workflow-preview="motion" aria-disabled="true"><i>动</i><span>动作迁移</span></button>
+            <button type="button" class="upcoming" data-workflow-preview="sequel" aria-disabled="true"><i>续</i><span>视频续集</span></button>
+          </nav>
           <aside class="xve-library xve-panel">
             <div class="xve-library-top">
               <div class="xve-resolution-settings">
@@ -307,10 +333,8 @@ function createWorkbench(node) {
             </div>
             <section class="xve-shot-section">
               <h3>分镜管理</h3>
-              <div class="xve-shot-tabs" data-shot-tabs></div>
-              <div class="xve-shot-toolbar">
-                <button type="button" class="xve-expand" data-expand-shots>展开分镜 (<b data-shot-total>1</b>) <span>⌄</span></button>
-                <button type="button" class="xve-select-all" data-select-all>全选</button>
+              <div class="xve-shot-head-row">
+                <div class="xve-shot-tabs" data-shot-tabs></div>
                 <div class="xve-shot-actions">
                   <button type="button" data-prev-shot title="上一个分镜">←</button>
                   <button type="button" data-next-shot title="下一个分镜">→</button>
@@ -319,23 +343,20 @@ function createWorkbench(node) {
                   <button type="button" data-add-shot><b>＋</b> 分镜</button>
                 </div>
               </div>
-            </section>
-            <section class="xve-generation-section">
-              <h3>生成设置</h3>
-              <div class="xve-batch-main">
-                <div class="xve-batch-actions">
-                  <button type="button" data-download-sheet>⇩ 下载表格</button>
-                  <button type="button" data-upload-sheet>↥ 上传表格</button>
+              <div class="xve-shot-toolbar">
+                <div class="xve-optimization-actions">
+                  <button type="button" data-open-placeholder="optimization">速度性能优化</button>
+                  <button type="button" data-sigma-open>采样 SIGMAS</button>
+                  <button type="button" data-lora-open>LoRA</button>
                   <button type="button" class="xve-repair-button face" data-face-repair>人脸修复</button>
-                  <div class="xve-generate-tools">
-                    <label class="xve-filename-prefix"><span>保存文件名</span><input type="text" maxlength="80" placeholder="留空按分镜名；例：天华 或 /西游记/天华" data-filename-prefix></label>
-                    <label class="xve-check xve-continuity-toggle"><input type="checkbox" data-cascade checked><span></span>承接上一视频尾帧</label>
-                    <label class="xve-continuity-field" data-continuity-setting>上下文帧数<select data-continuity-frames><option value="22" selected>22帧</option><option value="39">39帧</option><option value="56">56帧</option></select></label>
-                    <label class="xve-seconds">秒数 <input type="number" min="1" step="1" value="5" data-seconds></label>
-                    <button type="button" class="xve-generate small" data-generate>▶ 开始生成</button>
-                  </div>
                 </div>
-                <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-file hidden>
+                <div class="xve-generate-tools">
+                  <label class="xve-check xve-continuity-toggle"><input type="checkbox" data-cascade checked><span></span>继承上一分镜</label>
+                  <label class="xve-continuity-field" data-continuity-setting>上下文帧数<select data-continuity-frames><option value="22" selected>22帧（约0.9秒）</option><option value="39">39帧（约1.6秒）</option><option value="56">56帧（约2.3秒）</option></select></label>
+                  <label class="xve-seconds">秒数 <input type="number" min="1" step="1" value="5" data-seconds></label>
+                  <label class="xve-filename-prefix"><span>保存文件名</span><input type="text" maxlength="80" placeholder="留空按分镜名" data-filename-prefix></label>
+                  <button type="button" class="xve-generate small" data-generate>▶ 开始生成</button>
+                </div>
               </div>
             </section>
             <section class="xve-mode-section">
@@ -348,7 +369,14 @@ function createWorkbench(node) {
               </div>
             </section>
             <div class="xve-prompt-panel">
-              <label for="xve-prompt">单个分镜提示词</label>
+              <div class="xve-prompt-head">
+                <label for="xve-prompt">单个分镜提示词</label>
+                <div class="xve-sheet-actions">
+                  <button type="button" data-download-sheet>⇩ 下载表格</button>
+                  <button type="button" data-upload-sheet>↥ 上传表格</button>
+                  <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-file hidden>
+                </div>
+              </div>
               <div id="xve-prompt" data-prompt class="xve-prompt-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="描述当前分镜的主体、动作、运镜、光线和声音；&#10;点击左侧素材选择参考内容，无需在此重复上传"></div>
               <div class="xve-mention-menu" data-mention-menu hidden></div>
             </div>
@@ -367,24 +395,55 @@ function createWorkbench(node) {
               </div>
             </section>
             <section class="xve-results xve-panel">
-              <div class="xve-results-head"><strong>生成后视频列表 <span data-result-count>（0）</span></strong><div class="xve-results-actions"><button type="button" data-result-folder>▣ 保存目录</button><button type="button" data-result-merge>▦ 合并输出</button><button type="button" class="refresh" data-result-refresh>⟳ 刷新</button></div></div>
+              <div class="xve-results-head"><strong>生成后视频列表 <span data-result-count>（0）</span></strong><div class="xve-results-actions"><button type="button" data-result-folder>▣ 保存目录</button><button type="button" data-result-merge>▦ 导出成片</button><button type="button" class="refresh" data-result-refresh>⟳ 刷新</button></div></div>
               <nav class="xve-result-tabs"><button type="button" data-result-tab="before">放大前</button><button type="button" class="active" data-result-tab="after">放大后</button><button type="button" data-result-tab="merged">合并成片</button></nav>
               <div class="xve-result-list" data-result-list></div>
               <div class="xve-results-foot"><span data-result-total>共 0 个视频</span><div><label><input type="checkbox" data-result-all> 全部选择</label><button type="button" data-result-delete-selected>批量删除</button></div></div>
             </section>
           </div>
           <section class="xve-timeline xve-panel">
-            <header><strong>视频轨道</strong><div class="xve-timeline-tools"><span>时间缩放</span><button type="button" data-timeline-zoom-out>−</button><input type="range" min="20" max="100" step="2" value="38" data-timeline-zoom><button type="button" data-timeline-zoom-in>＋</button><b data-timeline-zoom-value>100%</b></div><span>拖动分镜调整顺序 · 点击轨道定位播放头</span></header>
+            <header><strong>视频编辑</strong><div class="xve-edit-tools"><button type="button" data-edit-split title="在播放头处切割选中视频">切割</button><button type="button" data-edit-delete title="从时间线删除选中片段">删除片段</button><button type="button" data-edit-link title="切换选中音频与视频的联动">音画解绑</button><button type="button" data-edit-mute title="静音或恢复选中音频">静音</button><label title="选中音频音量">音量 <input type="range" min="0" max="200" step="1" value="100" data-edit-volume><output data-edit-volume-value>100%</output></label><label title="音频淡入秒数">淡入 <input type="number" min="0" max="10" step="0.1" value="0" data-edit-fade-in></label><label title="音频淡出秒数">淡出 <input type="number" min="0" max="10" step="0.1" value="0" data-edit-fade-out></label></div><div class="xve-timeline-tools"><span>缩放</span><button type="button" data-timeline-zoom-out>−</button><input type="range" min="20" max="100" step="2" value="38" data-timeline-zoom><button type="button" data-timeline-zoom-in>＋</button><b data-timeline-zoom-value>100%</b></div></header>
             <div class="xve-timeline-body">
-              <div class="xve-track-labels"><span>时间</span><b>视频轨道</b></div>
+              <div class="xve-track-labels"><span>时间</span><b>视频轨道</b><b class="xve-audio-lane-labels"><span>音频1</span><span>音频2</span></b></div>
               <div class="xve-track-viewport" data-timeline-viewport>
                 <div class="xve-time-ruler" data-time-ruler></div>
                 <div class="xve-track xve-video-track" data-video-track></div>
+                <div class="xve-track xve-audio-track" data-audio-track><em>暂无音频素材</em></div>
                 <i class="xve-playhead" data-playhead></i>
               </div>
             </div>
           </section>
         </main>
+        <div class="xve-placeholder-backdrop" data-placeholder-dialog hidden>
+          <section class="xve-placeholder-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-placeholder-title">
+            <header><b id="xve-placeholder-title" data-placeholder-title>速度性能优化</b><div class="xve-dialog-header-actions"><label><input type="checkbox" data-speed-optimization-global> 全局</label><button type="button" data-placeholder-close aria-label="关闭">×</button></div></header>
+	            <main class="xve-function-tag-main">
+	              <nav class="xve-function-tag-filters" data-function-tag-filters>
+	                <button type="button" class="active" data-function-tag-filter="speed">速度</button>
+	                <button type="button" data-function-tag-filter="optimization">性能优化</button>
+	              </nav>
+	              <div class="xve-function-tag-list" data-function-tag-list></div>
+            </main>
+            <footer><button type="button" data-placeholder-close>关闭</button></footer>
+          </section>
+        </div>
+        <div class="xve-sigma-backdrop" data-sigma-dialog hidden>
+          <section class="xve-sigma-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-sigma-dialog-title">
+            <header><b id="xve-sigma-dialog-title">采样 SIGMAS</b><div class="xve-dialog-header-actions"><label><input type="checkbox" data-sampling-global> 全局</label><button type="button" data-sigma-close aria-label="关闭">×</button></div></header>
+            <main class="xve-sigma-main">
+              <section class="xve-sigma-tagged"><div class="xve-shot-config-head"><strong>采样标记节点</strong><span data-sampling-shot-state></span><button type="button" data-sampling-use-default>使用默认</button></div><div class="xve-function-tag-list compact" data-sampling-tag-list></div></section>
+              <section class="xve-sampler-pairing"><strong>采样器选择（自动配对）</strong><div class="xve-sampler-pair-list" data-sampler-pair-list></div></section>
+            </main>
+            <footer><button type="button" data-sigma-close>关闭</button></footer>
+          </section>
+        </div>
+        <div class="xve-sigma-backdrop" data-lora-dialog hidden>
+          <section class="xve-sigma-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-lora-dialog-title">
+            <header><b id="xve-lora-dialog-title">LoRA 功能</b><button type="button" data-lora-close aria-label="关闭">×</button></header>
+            <main><section><div class="xve-shot-config-head"><strong>LoRA 标记节点</strong><span data-lora-shot-state></span><button type="button" data-lora-use-default>使用默认</button></div><div class="xve-function-tag-list" data-lora-tag-list></div></section></main>
+            <footer><button type="button" data-lora-close>关闭</button></footer>
+          </section>
+        </div>
         <div class="xve-asset-backdrop" data-library-dialog hidden>
           <section class="xve-asset-dialog" role="dialog" aria-modal="true" aria-label="资产库">
             <header><div><b>资产库</b><span data-library-count>共 0 张图片</span></div><button type="button" data-library-close aria-label="关闭">×</button></header>
@@ -443,6 +502,7 @@ function createWorkbench(node) {
     const empty = q("[data-stage-empty]");
     const textDialog = q("[data-text-dialog]");
     let resolveTextDialog = null;
+    let textDialogMode = "text";
     const closeTextDialog = (value = null) => {
         textDialog.hidden = true;
         const resolve = resolveTextDialog;
@@ -452,21 +512,35 @@ function createWorkbench(node) {
     const openTextDialog = ({ title, label, value = "", maxLength = 80 }) => new Promise((resolve) => {
         if (resolveTextDialog) closeTextDialog(null);
         resolveTextDialog = resolve;
+        textDialogMode = "text";
         q("[data-text-dialog-title]").textContent = title;
         q("[data-text-dialog-label]").textContent = label;
         const field = q("[data-text-dialog-input]");
+        field.hidden = false;
         field.maxLength = maxLength;
         field.value = value;
+        q("[data-text-dialog-confirm]").textContent = "确定";
         textDialog.hidden = false;
         requestAnimationFrame(() => { field.focus(); field.select(); });
     });
+    const openConfirmDialog = ({ title, message, confirmText = "确定" }) => new Promise((resolve) => {
+        if (resolveTextDialog) closeTextDialog(null);
+        resolveTextDialog = resolve;
+        textDialogMode = "confirm";
+        q("[data-text-dialog-title]").textContent = title;
+        q("[data-text-dialog-label]").textContent = message;
+        q("[data-text-dialog-input]").hidden = true;
+        q("[data-text-dialog-confirm]").textContent = confirmText;
+        textDialog.hidden = false;
+        requestAnimationFrame(() => q("[data-text-dialog-confirm]")?.focus());
+    });
     root.querySelectorAll("[data-text-dialog-cancel]").forEach((button) => { button.onclick = () => closeTextDialog(null); });
-    q("[data-text-dialog-confirm]").onclick = () => closeTextDialog(q("[data-text-dialog-input]").value);
+    q("[data-text-dialog-confirm]").onclick = () => closeTextDialog(textDialogMode === "confirm" ? true : q("[data-text-dialog-input]").value);
     textDialog.onclick = (event) => { if (event.target === textDialog) closeTextDialog(null); };
     textDialog.onkeydown = (event) => {
         event.stopPropagation();
         if (event.key === "Escape") closeTextDialog(null);
-        if (event.key === "Enter") closeTextDialog(q("[data-text-dialog-input]").value);
+        if (event.key === "Enter") closeTextDialog(textDialogMode === "confirm" ? true : q("[data-text-dialog-input]").value);
     };
     const filenamePrefixStorageKey = `xiantu.video-editor.filename-prefix:${location.hash || location.pathname}:${node.id}`;
     const editorStateStorageKey = `xiantu.video-editor.state:${location.hash || location.pathname}:${node.id}`;
@@ -502,8 +576,79 @@ function createWorkbench(node) {
     let shots = Array.isArray(initialState.shots) && initialState.shots.length
         ? initialState.shots.map((shot, index) => ({ ...shot, id: String(shot.id || makeId()), title: String(shot.title || `分镜 ${index + 1}`), selected: shot.selected !== false, prompt: String(shot.prompt || ""), mode: String(shot.mode || "reference"), seconds: Number(shot.seconds || 5), inheritPrevious: index > 0 && (shot.inheritPrevious ?? initialState.continuityEnabled ?? true), referenceSize: referenceSizeExplicitAtLoad && (shot.referenceSize === "max" || (shot.referenceSize == null && initialState.referenceSize === "max")) ? "max" : "match" }))
         : [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "match" }];
+    const videoModes = ["text", "image", "frames", "reference"];
+    const ensureModePrompts = (shot) => {
+        const currentMode = videoModes.includes(String(shot?.mode)) ? String(shot.mode) : "reference";
+        const saved = shot?.prompts && typeof shot.prompts === "object" ? shot.prompts : {};
+        const legacyPrompt = String(shot?.prompt || "");
+        const savedFunctionSelections = shot?.functionSelections && typeof shot.functionSelections === "object" ? shot.functionSelections : {};
+        shot.mode = currentMode;
+        shot.prompts = Object.fromEntries(videoModes.map((mode) => [mode, String(saved[mode] ?? (mode === currentMode ? legacyPrompt : ""))]));
+        shot.prompt = shot.prompts[currentMode];
+        shot.functionSelections = {};
+        if (savedFunctionSelections.samplingNodeId !== undefined && savedFunctionSelections.samplingNodeId !== null && String(savedFunctionSelections.samplingNodeId)) {
+            shot.functionSelections.samplingNodeId = String(savedFunctionSelections.samplingNodeId);
+        }
+        if (savedFunctionSelections.loraNodeModes && typeof savedFunctionSelections.loraNodeModes === "object") {
+            shot.functionSelections.loraNodeModes = Object.fromEntries(Object.entries(savedFunctionSelections.loraNodeModes).map(([id, mode]) => [String(id), Number(mode)]));
+        }
+        for (const category of ["speed", "optimization"]) {
+            const key = `${category}NodeModes`;
+            if (savedFunctionSelections[key] && typeof savedFunctionSelections[key] === "object") {
+                shot.functionSelections[key] = Object.fromEntries(Object.entries(savedFunctionSelections[key]).map(([id, mode]) => [String(id), Number(mode)]));
+            }
+        }
+        return shot;
+    };
+    shots.forEach(ensureModePrompts);
+    let functionSelectionDefaults = initialState.functionSelectionDefaults && typeof initialState.functionSelectionDefaults === "object"
+        ? structuredClone(initialState.functionSelectionDefaults)
+        : null;
+    const savedFunctionSelectionScopes = initialState.functionSelectionScopes && typeof initialState.functionSelectionScopes === "object"
+        ? initialState.functionSelectionScopes
+        : {};
+    let functionSelectionScopes = {
+        samplingGlobal: Boolean(savedFunctionSelectionScopes.samplingGlobal),
+        speedOptimizationGlobal: savedFunctionSelectionScopes.speedOptimizationGlobal === undefined
+            ? true
+            : Boolean(savedFunctionSelectionScopes.speedOptimizationGlobal),
+        loraGlobalByNode: savedFunctionSelectionScopes.loraGlobalByNode && typeof savedFunctionSelectionScopes.loraGlobalByNode === "object"
+            ? Object.fromEntries(Object.entries(savedFunctionSelectionScopes.loraGlobalByNode).map(([id, enabled]) => [String(id), Boolean(enabled)]))
+            : {},
+    };
+    let samplingSamplerPairs = initialState.samplingSamplerPairs && typeof initialState.samplingSamplerPairs === "object"
+        ? Object.fromEntries(Object.entries(initialState.samplingSamplerPairs).map(([samplingId, samplerId]) => [String(samplingId), String(samplerId)]))
+        : {};
     let activeShotId = String(initialState.activeShotId || shots[0].id);
     if (!shots.some((shot) => shot.id === activeShotId)) activeShotId = shots[0].id;
+    const sanitizeEditNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const sanitizeEditEnd = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) && Number(value) > 0
+        ? Number(value)
+        : null;
+    let videoEditSegments = Array.isArray(initialState.videoEditSegments) ? initialState.videoEditSegments.map((segment) => ({
+        id: String(segment.id || makeId()),
+        shotId: String(segment.shotId || ""),
+        sourceStart: Math.max(0, sanitizeEditNumber(segment.sourceStart)),
+        sourceEnd: sanitizeEditEnd(segment.sourceEnd),
+    })).filter((segment) => segment.shotId) : [];
+    let audioEditSegments = Array.isArray(initialState.audioEditSegments) ? initialState.audioEditSegments.map((segment) => ({
+        id: String(segment.id || makeId()),
+        videoSegmentId: String(segment.videoSegmentId || ""),
+        shotId: String(segment.shotId || ""),
+        sourceStart: Math.max(0, sanitizeEditNumber(segment.sourceStart)),
+        sourceEnd: sanitizeEditEnd(segment.sourceEnd),
+        timelineStart: Math.max(0, sanitizeEditNumber(segment.timelineStart)),
+        linked: segment.linked !== false,
+        muted: Boolean(segment.muted),
+        volume: Math.max(0, Math.min(2, sanitizeEditNumber(segment.volume, 1))),
+        fadeIn: Math.max(0, sanitizeEditNumber(segment.fadeIn)),
+        fadeOut: Math.max(0, sanitizeEditNumber(segment.fadeOut)),
+    })).filter((segment) => segment.shotId) : [];
+    let activeEditSelection = initialState.activeEditSelection && ["video", "audio"].includes(initialState.activeEditSelection.kind)
+        ? { kind: initialState.activeEditSelection.kind, id: String(initialState.activeEditSelection.id || "") }
+        : null;
+    let excludedTimelineShotIds = new Set(Number(initialState.version || 0) >= 3 && Array.isArray(initialState.excludedTimelineShotIds) ? initialState.excludedTimelineShotIds.map(String) : []);
+    let timelinePlayheadSeconds = Math.max(0, sanitizeEditNumber(initialState.timelinePlayheadSeconds));
     const assetList = savedAssetRecords.map((asset) => ({
         ...asset,
         id: String(asset.id || makeId()),
@@ -525,6 +670,8 @@ function createWorkbench(node) {
     let referenceSizeExplicit = referenceSizeExplicitAtLoad;
     let referenceSize = referenceSizeExplicit && initialState.referenceSize === "max" ? "max" : "match";
     let modelProfile = ["minimax-h3"].includes(String(initialState.modelProfile)) ? String(initialState.modelProfile) : "minimax-h3";
+    let sigmaGroupKeys = Array.isArray(initialState.sigmaGroupKeys) ? initialState.sigmaGroupKeys.map(String) : [];
+    let activeSigmaGroupKey = String(initialState.activeSigmaGroupKey || "");
     const resolutionRatios = { "1:1": 1, "2:3": 2 / 3, "3:2": 3 / 2, "3:4": 3 / 4, "4:3": 4 / 3, "9:16": 9 / 16, "16:9": 16 / 9, "21:9": 21 / 9 };
     const resolutionState = {
         aspect: resolutionRatios[initialState.resolution?.aspect] ? initialState.resolution.aspect : "16:9",
@@ -537,7 +684,8 @@ function createWorkbench(node) {
     const snapContinuityFrames = (value) => continuityFrameChoices.reduce((best, item) => Math.abs(item - Number(value || 22)) < Math.abs(best - Number(value || 22)) ? item : best, 22);
     let continuityEnabled = initialState.continuityEnabled ?? initialState.continuity?.enabled ?? true;
     let continuityOverlapFrames = snapContinuityFrames(initialState.continuityOverlapFrames ?? initialState.continuity?.frames ?? 22);
-    const continuityMode = "continue";
+    const continuityMode = "latent";
+    const continuityCacheNamespace = String(initialState.continuityCacheNamespace || globalThis.crypto?.randomUUID?.() || makeId());
     const cleanupSettings = {
         cache: Boolean(initialState.cleanupSettings?.cache),
         vram: Boolean(initialState.cleanupSettings?.vram),
@@ -563,6 +711,7 @@ function createWorkbench(node) {
             : { title: "等待生成", actionDetail: "", batchDetail: "分镜 0/0", percent: 0, phase: "prepare", phasePercent: 0 };
     })();
     runtime.progressTrace = Array.isArray(runtime.progressTrace) ? runtime.progressTrace : [];
+    runtime.directorStagePercent = 0;
     runtime.externalBusy = false;
     let hardwareTimer = null;
     let generationElapsedTimer = null;
@@ -724,21 +873,31 @@ function createWorkbench(node) {
         const secs = Math.floor(value % 60);
         return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
     };
-    const save = () => {
-        const nextState = {
-            version: 2,
+    const buildEditorState = () => ({
+            version: 3,
             activeShotId,
             modelProfile,
+            sigmaGroupKeys: [...sigmaGroupKeys],
+            activeSigmaGroupKey,
             filenamePrefix,
             referenceSize,
             referenceSizeExplicit,
             resolution: { ...resolutionState, ...resolutionFor() },
             timelineScale,
+            timelinePlayheadSeconds,
+            activeEditSelection,
+            videoEditSegments,
+            audioEditSegments,
+            excludedTimelineShotIds: [...excludedTimelineShotIds],
             continuityEnabled,
             continuityOverlapFrames,
             continuityMode,
+            continuityCacheNamespace,
             cleanupSettings: { ...cleanupSettings },
             faceRepair: structuredClone(faceRepairSettings),
+            functionSelectionDefaults: functionSelectionDefaults ? structuredClone(functionSelectionDefaults) : null,
+            functionSelectionScopes: { ...functionSelectionScopes },
+            samplingSamplerPairs: { ...samplingSamplerPairs },
             generationProgress: { ...generationProgress },
             shots,
             assets: assetList.map(({ id, sourceAssetId, sourceCategory, sourceContentHash, sourceRelativePath, sourcePath, serverName, subfolder, sourceType, shotId, name, alias, note, type, duration, width, height, global }) => ({ id, sourceAssetId: String(sourceAssetId || ""), sourceCategory: String(sourceCategory || ""), sourceContentHash: String(sourceContentHash || ""), sourceRelativePath: String(sourceRelativePath || ""), sourcePath: String(sourcePath || ""), serverName: String(serverName || ""), subfolder: String(subfolder || ""), sourceType: String(sourceType || "input"), shotId, name, alias: String(alias || ""), note: String(note || ""), type, duration, width, height, global: Boolean(global) })),
@@ -746,7 +905,9 @@ function createWorkbench(node) {
             results,
             resultView,
             updated_at: Date.now(),
-        };
+        });
+    const save = () => {
+        const nextState = buildEditorState();
         const serialized = JSON.stringify(nextState);
         const changed = String(editorStateWidget?.value || "") !== serialized;
         if (editorStateWidget) editorStateWidget.value = serialized;
@@ -758,10 +919,108 @@ function createWorkbench(node) {
         node.graph?.setDirtyCanvas?.(true, true);
         node.setDirtyCanvas?.(true, true);
     };
+    const workflowGroups = () => {
+        const groups = Array.isArray(node.graph?._groups) ? node.graph._groups : [];
+        return groups.map((group, index) => ({
+            group,
+            key: String(group.id ?? group._id ?? `${String(group.title || "未命名组")}|${Number(group.pos?.[0] || 0)}|${Number(group.pos?.[1] || 0)}|${index}`),
+            title: String(group.title || `工作流组 ${index + 1}`),
+        }));
+    };
+    const groupMembers = (group) => {
+        try { group.recomputeInsideNodes?.(); } catch {}
+        if (Array.isArray(group._nodes)) return group._nodes.filter((item) => item && item !== node);
+        const [left, top] = group.pos || [0, 0];
+        const [width, height] = group.size || [0, 0];
+        return (node.graph?._nodes || []).filter((item) => {
+            if (!item || item === node) return false;
+            const [x, y] = item.pos || [0, 0];
+            const [w, h] = item.size || [0, 0];
+            return x >= left && y >= top && x + w <= left + width && y + h <= top + height;
+        });
+    };
+    const groupProducesSigmas = (group) => groupMembers(group).some((item) =>
+        (item.outputs || []).some((output) => String(output?.type || "").toUpperCase() === "SIGMAS")
+    );
+    const selectedSigmaGroups = () => {
+        const groups = workflowGroups();
+        if (!sigmaGroupKeys.length) {
+            sigmaGroupKeys = groups.filter(({ group, title }) => /sigmas?/i.test(title) || groupProducesSigmas(group)).map(({ key }) => key);
+        }
+        sigmaGroupKeys = sigmaGroupKeys.filter((key) => groups.some((item) => item.key === key));
+        if (!activeSigmaGroupKey || !sigmaGroupKeys.includes(activeSigmaGroupKey)) {
+            const enabled = groups.find(({ key, group }) => sigmaGroupKeys.includes(key) && groupMembers(group).some((item) => Number(item.mode || 0) !== 4));
+            activeSigmaGroupKey = enabled?.key || sigmaGroupKeys[0] || "";
+        }
+        return groups.filter(({ key }) => sigmaGroupKeys.includes(key));
+    };
+    const applySigmaGroup = (key) => {
+        activeSigmaGroupKey = String(key || "");
+        for (const { key: itemKey, group } of selectedSigmaGroups()) {
+            for (const item of groupMembers(group)) item.mode = itemKey === activeSigmaGroupKey ? 0 : 4;
+        }
+        node.graph?.change?.();
+        node.graph?.setDirtyCanvas?.(true, true);
+        renderSigmaGroups();
+        save();
+    };
+    const renderSigmaGroups = () => {
+        const pills = q("[data-sigma-pills]");
+        const menu = q("[data-sigma-menu]");
+        if (!pills || !menu) return;
+        const groups = workflowGroups();
+        const selected = selectedSigmaGroups();
+        pills.replaceChildren();
+        for (const { key, title } of selected) {
+            const pill = document.createElement("span");
+            pill.className = `xve-sigma-pill${key === activeSigmaGroupKey ? " active" : ""}`;
+            const choose = document.createElement("button");
+            choose.type = "button";
+            choose.textContent = title;
+            choose.title = `启用 ${title}`;
+            choose.onclick = () => applySigmaGroup(key);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "xve-sigma-remove";
+            remove.textContent = "×";
+            remove.title = `从采样 SIGMAS 选择中移除 ${title}`;
+            remove.onclick = (event) => {
+                event.stopPropagation();
+                sigmaGroupKeys = sigmaGroupKeys.filter((item) => item !== key);
+                if (activeSigmaGroupKey === key) activeSigmaGroupKey = sigmaGroupKeys[0] || "";
+                renderSigmaGroups();
+                save();
+            };
+            pill.append(choose, remove);
+            pills.appendChild(pill);
+        }
+        menu.replaceChildren();
+        for (const { key, title } of groups.filter((item) => !sigmaGroupKeys.includes(item.key))) {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.textContent = title;
+            option.onclick = () => {
+                sigmaGroupKeys.push(key);
+                if (!activeSigmaGroupKey) activeSigmaGroupKey = key;
+                q("[data-sigma-dialog]").hidden = true;
+                renderSigmaGroups();
+                save();
+            };
+            menu.appendChild(option);
+        }
+        if (!menu.childElementCount) {
+            const empty = document.createElement("small");
+            empty.textContent = "当前工作流没有可添加的其他组";
+            menu.appendChild(empty);
+        }
+    };
     const updatePrompt = () => {
         const shot = activeShot();
         if (!shot) return;
-        shot.prompt = promptText();
+        const nextPrompt = promptText();
+        ensureModePrompts(shot);
+        shot.prompt = nextPrompt;
+        shot.prompts[shot.mode] = nextPrompt;
         shot.seconds = Math.max(1, Number(q("[data-seconds]").value) || 5);
         renderResolutionSettings();
         renderTimeline();
@@ -770,13 +1029,15 @@ function createWorkbench(node) {
     const loadShot = () => {
         const shot = activeShot();
         if (!shot) return;
+        ensureModePrompts(shot);
+        applyShotFunctionSelections(shot);
         q("[data-seconds]").value = String(shot.seconds || 5);
         root.querySelectorAll("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === shot.mode));
         continuityEnabled = Boolean(shot.inheritPrevious);
         referenceSize = shot.referenceSize === "max" ? "max" : "match";
         syncModeUI();
         syncContinuityUI();
-        renderPromptContent(shot.prompt);
+        renderPromptContent(shot.prompts[shot.mode]);
         renderResolutionSettings();
     };
     const syncContinuityUI = () => {
@@ -798,7 +1059,7 @@ function createWorkbench(node) {
             button.className = "xve-shot-tab";
             button.classList.toggle("active", shot.id === activeShotId);
             button.title = shot.title || `分镜 ${index + 1}`;
-            button.innerHTML = `<span class="xve-shot-check ${shot.selected ? "checked" : ""}">✓</span><b>分镜 ${String(index + 1).padStart(2, "0")}</b>${shot.id === activeShotId ? '<i>×</i>' : ""}`;
+            button.innerHTML = `<span class="xve-shot-check ${shot.selected ? "checked" : ""}">✓</span><span class="xve-shot-tab-copy"><b>分镜 ${String(index + 1).padStart(2, "0")}</b><small>${Math.max(1, Number(shot.seconds) || 5)}秒</small></span>${shot.id === activeShotId ? '<i>×</i>' : ""}`;
             button.onclick = (event) => {
                 if (event.target.closest(".xve-shot-check")) {
                     shot.selected = !shot.selected;
@@ -816,7 +1077,6 @@ function createWorkbench(node) {
             tabs.appendChild(button);
         });
         tabs.scrollLeft = previousScrollLeft;
-        q("[data-shot-total]").textContent = String(shots.length);
     };
     const moveShot = (offset) => {
         updatePrompt();
@@ -930,7 +1190,7 @@ function createWorkbench(node) {
         root.classList.toggle("xve-mode-frames", mode === "frames");
         root.classList.toggle("xve-mode-single-image", mode === "image");
         q("[data-reference-size]").value = referenceSize;
-        q("[data-reference-size]").disabled = mode !== "reference";
+        q("[data-reference-size]").disabled = mode === "text";
         q('[data-asset-type="image"]').textContent = mode === "frames" ? "首尾帧" : mode === "image" ? "输入图片" : "参考图";
         root.querySelectorAll("[data-asset-type]").forEach((button) => {
             button.hidden = imageOnly && button.dataset.assetType !== "image";
@@ -944,18 +1204,37 @@ function createWorkbench(node) {
     };
     const hideMentionMenu = () => { q("[data-mention-menu]").hidden = true; };
     let promptMentionRange = null;
+    const mentionRangeAtCaret = (editor = q("[data-prompt]")) => {
+        const selection = window.getSelection();
+        if (!selection?.rangeCount) return null;
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed || !editor.contains(range.startContainer)) return null;
+        let textNode = range.startContainer;
+        let offset = range.startOffset;
+        if (textNode.nodeType !== Node.TEXT_NODE) {
+            if (offset < 1) return null;
+            let candidate = textNode.childNodes?.[offset - 1] || null;
+            while (candidate?.lastChild) candidate = candidate.lastChild;
+            if (candidate?.nodeType !== Node.TEXT_NODE) return null;
+            textNode = candidate;
+            offset = String(textNode.nodeValue || "").length;
+        }
+        if (offset < 1 || textNode.nodeValue?.[offset - 1] !== "@") return null;
+        const trigger = document.createRange();
+        trigger.setStart(textNode, offset - 1);
+        trigger.setEnd(textNode, offset);
+        return trigger;
+    };
     const insertMention = (tag) => {
         const editor = q("[data-prompt]");
         const item = mentionItems().find((candidate) => candidate.tag === tag);
         if (!item) return;
         const selection = window.getSelection();
-        const range = promptMentionRange?.cloneRange() || document.createRange();
+        const triggerRange = promptMentionRange?.cloneRange();
+        const range = triggerRange || document.createRange();
         if (!promptMentionRange) {
             range.selectNodeContents(editor);
             range.collapse(false);
-        }
-        if (range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset > 0 && range.startContainer.nodeValue?.[range.startOffset - 1] === "@") {
-            range.setStart(range.startContainer, range.startOffset - 1);
         }
         range.deleteContents();
         const token = createPromptToken(item);
@@ -987,6 +1266,11 @@ function createWorkbench(node) {
             menu.appendChild(button);
         });
         menu.hidden = false;
+    };
+    const refreshMentionMenu = () => {
+        promptMentionRange = mentionRangeAtCaret();
+        if (promptMentionRange) showMentionMenu();
+        else hideMentionMenu();
     };
     const uploadMedia = async (file) => {
         const form = new FormData();
@@ -1102,9 +1386,18 @@ function createWorkbench(node) {
                 shot.title || `分镜 ${index + 1}`,
                 Number(shot.seconds || 5),
                 index > 0 && shot.inheritPrevious ? "是" : "否",
+                index > 0 && shot.inheritPrevious ? Number(continuityOverlapFrames) : "",
                 MODE_LABELS[shot.mode] || MODE_LABELS.reference,
                 shot.prompt || "",
                 shot.referenceSize === "max" ? "MAX" : "标准",
+                functionSelectionScopes.speedOptimizationGlobal ? "全局" : "单分镜",
+                functionSelectionScopes.samplingGlobal ? "全局" : "单分镜",
+                selectionTextForShot(shot, "speed"),
+                selectionTextForShot(shot, "optimization"),
+                samplingSelectionText(shot),
+                samplerPairTextForShot(shot),
+                loraSelectionText(shot),
+                loraGlobalSelectionText(),
                 ...paths("image", 9), ...paths("video", 3), ...paths("audio", 3),
                 resolutionState.aspect,
                 resolutionLabel,
@@ -1137,10 +1430,10 @@ function createWorkbench(node) {
                 [["分镜编号", "序号", "编号", "镜头编号"], "分镜编号（或序号）"],
                 [["分镜名", "分镜名称", "镜头名"], "分镜名"],
                 [["秒数", "时长", "时长（秒）"], "秒数"],
-                [["是否继承上一帧", "是否继承", "继承上一帧"], "是否继承上一帧"],
+                [["是否承接上一分镜", "是否继承上一帧", "是否继承", "继承上一帧"], "是否承接上一分镜"],
                 [["生成类型（全参考生视频）", "生成类型"], "生成类型"],
                 [["提示词", "分镜提示词"], "提示词"],
-                [["图片参数（MAX）", "图片参数"], "图片参数"],
+                [["参考图尺寸", "图片参数（MAX）", "图片参数"], "参考图尺寸"],
                 [["宽高比", "画面比例"], "宽高比"],
                 [["分辨率", "生成分辨率"], "分辨率"],
                 [["保存文件名", "文件名"], "保存文件名"],
@@ -1150,14 +1443,42 @@ function createWorkbench(node) {
             const dataRows = rows.slice(1).filter((row) => row.some((value) => String(value).trim()));
             if (!dataRows.length) throw new Error("表格没有可导入的分镜行");
             const first = dataRows[0];
-            const aspect = valueAt(first, "宽高比").split(/[（ (]/)[0];
+            const aspect = valueAt(first, "画面比例", "宽高比").split(/[（ (]/)[0];
             if (resolutionRatios[aspect]) resolutionState.aspect = aspect;
-            const resolutionText = valueAt(first, "分辨率");
+            const resolutionText = valueAt(first, "生成分辨率", "分辨率");
             const mpMatch = resolutionText.match(/([0-9]+(?:\.[0-9]+)?)\s*MP/i);
             const sizeMatch = resolutionText.match(/(\d+)\s*[x×*]\s*(\d+)/i);
             if (mpMatch) resolutionState.megapixels = Math.max(0.1, Math.min(3, Number(mpMatch[1]) || 1));
             else if (sizeMatch) resolutionState.megapixels = Math.max(0.1, Math.min(3, Math.round((Number(sizeMatch[1]) * Number(sizeMatch[2]) / (1024 * 1024)) * 10) / 10));
             filenamePrefix = valueAt(first, "保存文件名");
+            const importedContinuityFrames = dataRows
+                .map((row) => Number(valueAt(row, "承接上下文帧数", "上下文帧数", "承接帧数")))
+                .find((value) => Number.isFinite(value) && value > 0);
+            if (importedContinuityFrames) continuityOverlapFrames = snapContinuityFrames(importedContinuityFrames);
+            const speedScopeText = valueAt(first, "速度优化作用范围", "速度作用范围");
+            const samplingScopeText = valueAt(first, "采样作用范围", "采样SIGMAS作用范围");
+            functionSelectionScopes.speedOptimizationGlobal = speedScopeText ? speedScopeText !== "单分镜" : true;
+            functionSelectionScopes.samplingGlobal = samplingScopeText ? samplingScopeText === "全局" : false;
+            functionSelectionScopes.loraGlobalByNode = Object.fromEntries(
+                parseNodeSelectionIds(valueAt(first, "LoRA 全局节点", "LORA全局节点", "LoRA全局节点"), "lora").map((id) => [id, true]),
+            );
+            if (functionSelectionScopes.speedOptimizationGlobal) {
+                applyImportedGlobalNodeModes(dataRows, valueAt, "speed", "全局速度选择", "速度选择");
+                applyImportedGlobalNodeModes(dataRows, valueAt, "optimization", "全局性能优化选择", "性能优化选择");
+            }
+            if (functionSelectionScopes.samplingGlobal) {
+                const importedSamplingId = dataRows
+                    .map((row) => parseSamplingSelection(valueAt(row, "采样 SIGMAS 选择", "采样SIGMAS选择", "采样选择")))
+                    .find(Boolean);
+                if (importedSamplingId) ensureFunctionSelectionDefaults().samplingNodeId = importedSamplingId;
+            }
+            const firstLoraModes = parseNodeModeSelection(valueAt(first, "LoRA 选择", "LORA选择", "LoRA选择"), "lora");
+            if (firstLoraModes) {
+                const defaults = ensureFunctionSelectionDefaults();
+                for (const id of Object.keys(functionSelectionScopes.loraGlobalByNode)) {
+                    if (Object.prototype.hasOwnProperty.call(firstLoraModes, id)) defaults.loraNodeModes[id] = firstLoraModes[id];
+                }
+            }
 
             const importedShots = [];
             const importedAssets = [];
@@ -1192,12 +1513,28 @@ function createWorkbench(node) {
                 if (!mode) throw new Error(`第 ${rowNumber} 行生成类型“${modeLabel}”无效`);
                 const shotId = makeId();
                 const seconds = Math.max(1, Number(valueAt(row, "秒数", "时长", "时长（秒）")) || 5);
-                const yes = ["是", "true", "1", "yes", "继承"].includes(valueAt(row, "是否继承上一帧", "是否继承", "继承上一帧").toLowerCase());
-                const shot = { id: shotId, sheetNumber, title: valueAt(row, "分镜名", "分镜名称", "镜头名") || `分镜 ${sheetNumber}`, selected: true, prompt: valueAt(row, "提示词", "分镜提示词"), mode, seconds, inheritPrevious: index > 0 && yes, referenceSize: valueAt(row, "图片参数（MAX）", "图片参数").toUpperCase() === "MAX" ? "max" : "match" };
+                const yes = ["是", "true", "1", "yes", "继承", "承接"].includes(valueAt(row, "是否承接上一分镜", "是否继承上一帧", "是否继承", "继承上一帧").toLowerCase());
+                const shot = ensureModePrompts({ id: shotId, sheetNumber, title: valueAt(row, "分镜名称", "分镜名", "镜头名") || `分镜 ${sheetNumber}`, selected: true, prompt: valueAt(row, "提示词", "分镜提示词"), mode, seconds, inheritPrevious: index > 0 && yes, referenceSize: valueAt(row, "参考图尺寸", "图片参数（MAX）", "图片参数").toUpperCase() === "MAX" ? "max" : "match" });
+                const samplingNodeId = parseSamplingSelection(valueAt(row, "采样 SIGMAS 选择", "采样SIGMAS选择", "采样选择"));
+                const samplerPairName = valueAt(row, "采样器（自动匹配）", "采样器", "搭配采样器").toLowerCase();
+                const importedSamplerPair = samplerChoiceNodes().find((item) => samplerNameOf(item) === samplerPairName);
+                if (samplingNodeId && importedSamplerPair) samplingSamplerPairs[samplingNodeId] = functionNodeId(importedSamplerPair);
+                if (!functionSelectionScopes.samplingGlobal && samplingNodeId) shot.functionSelections.samplingNodeId = samplingNodeId;
+                if (!functionSelectionScopes.speedOptimizationGlobal) {
+                    const speedModes = parseNodeModeSelection(valueAt(row, "速度选择", "全局速度选择"), "speed");
+                    const optimizationModes = parseNodeModeSelection(valueAt(row, "性能优化选择", "全局性能优化选择"), "optimization");
+                    if (speedModes) shot.functionSelections.speedNodeModes = speedModes;
+                    if (optimizationModes) shot.functionSelections.optimizationNodeModes = optimizationModes;
+                }
+                const loraNodeModes = parseNodeModeSelection(valueAt(row, "LoRA 选择", "LORA选择", "LoRA选择"), "lora");
+                if (loraNodeModes) {
+                    const localLoraModes = Object.fromEntries(Object.entries(loraNodeModes).filter(([id]) => !functionSelectionScopes.loraGlobalByNode[id]));
+                    if (Object.keys(localLoraModes).length) shot.functionSelections.loraNodeModes = localLoraModes;
+                }
                 importedShots.push(shot);
-                for (let ref = 1; ref <= 9; ref += 1) await makeAssetFromPath(valueAt(row, `参考图绝对地址${ref}`), "image", shotId, rowNumber, `参考图绝对地址${ref}`);
-                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考视频${ref}`), "video", shotId, rowNumber, `参考视频${ref}`);
-                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考音频${ref}`), "audio", shotId, rowNumber, `参考音频${ref}`);
+                for (let ref = 1; ref <= 9; ref += 1) await makeAssetFromPath(valueAt(row, `参考图片绝对路径${ref}`, `参考图绝对地址${ref}`), "image", shotId, rowNumber, `参考图片绝对路径${ref}`);
+                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考视频绝对路径${ref}`, `参考视频${ref}`), "video", shotId, rowNumber, `参考视频绝对路径${ref}`);
+                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考音频绝对路径${ref}`, `参考音频${ref}`), "audio", shotId, rowNumber, `参考音频绝对路径${ref}`);
             }
             assetList.forEach((asset) => URL.revokeObjectURL(asset.url));
             assetList.splice(0, assetList.length, ...importedAssets);
@@ -1241,21 +1578,21 @@ function createWorkbench(node) {
             card.querySelector("input").onchange = (event) => { asset.selected = event.target.checked; card.classList.toggle("selected", asset.selected); };
             card.querySelector("select").onchange = async (event) => {
                 try { await persistLibraryAsset({ category: event.target.value }); renderLibrary(); }
-                catch (error) { alert(String(error?.message || error)); renderLibrary(); }
+                catch (error) { showDirectorError(String(error?.message || error)); renderLibrary(); }
             };
             card.querySelector("[data-library-rename]").onclick = async (event) => {
                 event.preventDefault(); event.stopPropagation();
                 const value = await openTextDialog({ title: "修改资产名称", label: "资产名称", value: asset.name || "", maxLength: 80 });
                 if (value === null || !String(value).trim()) return;
                 try { await persistLibraryAsset({ name: String(value).trim().slice(0, 80) }); renderLibrary(); renderAssets(); }
-                catch (error) { alert(String(error?.message || error)); }
+                catch (error) { showDirectorError(String(error?.message || error)); }
             };
             card.querySelector("[data-library-note]").onclick = async (event) => {
                 event.preventDefault(); event.stopPropagation();
                 const value = await openTextDialog({ title: "编辑资产备注", label: "备注（留空即删除）", value: String(asset.note || ""), maxLength: 2000 });
                 if (value === null) return;
                 try { await persistLibraryAsset({ note: String(value).trim().slice(0, 2000) }); renderLibrary(); renderAssets(); }
-                catch (error) { alert(String(error?.message || error)); }
+                catch (error) { showDirectorError(String(error?.message || error)); }
             };
             grid.appendChild(card);
         });
@@ -1282,7 +1619,7 @@ function createWorkbench(node) {
     const migrateLegacyLibraryAssets = async (button) => {
         const records = await libraryStoreRequest("readonly", (store) => store.getAll());
         if (!records.length) { button.textContent = "没有旧资产"; return; }
-        if (!window.confirm(`检测到 ${records.length} 个旧资产。确认复制到公共“闲兔资产库”？旧 IndexedDB 不会删除。`)) return;
+        if (!await openConfirmDialog({ title: "迁移旧资产", message: `检测到 ${records.length} 个旧资产。确认复制到公共“闲兔资产库”？旧 IndexedDB 不会删除。`, confirmText: "确认复制" })) return;
         let migrated = 0;
         for (const record of records) {
             const blob = record.blob instanceof Blob ? record.blob : null;
@@ -1337,52 +1674,228 @@ function createWorkbench(node) {
         save();
     };
     const timelineDurationForShot = (shot) => {
-        const result = results.find((item) => String(item.shotId) === String(shot?.id) && resultKind(item) === "after")
-            || results.find((item) => String(item.shotId) === String(shot?.id) && resultKind(item) === "before");
-        const measured = Number(result?.actualDuration || 0);
-        if (Number.isFinite(measured) && measured > 0) return measured;
         return Math.max(1 / resolutionState.fps, Number(shot?.seconds || 5));
+    };
+    const syncEditSegments = () => {
+        const shotIds = new Set(shots.map((shot) => String(shot.id)));
+        videoEditSegments = videoEditSegments.filter((segment) => shotIds.has(String(segment.shotId)));
+        audioEditSegments = audioEditSegments.filter((segment) => shotIds.has(String(segment.shotId)));
+        for (const shot of shots) {
+            if (excludedTimelineShotIds.has(String(shot.id))) continue;
+            if (videoEditSegments.some((segment) => String(segment.shotId) === String(shot.id))) continue;
+            const videoSegment = { id: makeId(), shotId: String(shot.id), sourceStart: 0, sourceEnd: null };
+            videoEditSegments.push(videoSegment);
+            audioEditSegments.push({ id: makeId(), videoSegmentId: videoSegment.id, shotId: String(shot.id), sourceStart: 0, sourceEnd: null, timelineStart: 0, linked: true, muted: false, volume: 1, fadeIn: 0, fadeOut: 0 });
+        }
+        const segmentIds = new Set(videoEditSegments.map((segment) => String(segment.id)));
+        audioEditSegments = audioEditSegments.filter((segment) => !segment.linked || segmentIds.has(String(segment.videoSegmentId)));
+        const videoById = new Map(videoEditSegments.map((segment) => [String(segment.id), segment]));
+        for (const audio of audioEditSegments) {
+            if (!audio.linked) continue;
+            const linkedVideo = videoById.get(String(audio.videoSegmentId));
+            if (!linkedVideo) continue;
+            audio.shotId = linkedVideo.shotId;
+            audio.sourceStart = linkedVideo.sourceStart;
+            audio.sourceEnd = linkedVideo.sourceEnd;
+        }
+        for (const segment of videoEditSegments) {
+            if (audioEditSegments.some((audio) => String(audio.videoSegmentId) === String(segment.id))) continue;
+            audioEditSegments.push({ id: makeId(), videoSegmentId: segment.id, shotId: segment.shotId, sourceStart: segment.sourceStart, sourceEnd: segment.sourceEnd, timelineStart: 0, linked: true, muted: false, volume: 1, fadeIn: 0, fadeOut: 0 });
+        }
+        const selectionExists = activeEditSelection?.kind === "video"
+            ? videoEditSegments.some((segment) => String(segment.id) === String(activeEditSelection.id))
+            : activeEditSelection?.kind === "audio"
+                ? audioEditSegments.some((segment) => String(segment.id) === String(activeEditSelection.id))
+                : false;
+        if (!selectionExists) {
+            const preferred = videoEditSegments.find((segment) => String(segment.shotId) === String(activeShotId)) || videoEditSegments[0];
+            activeEditSelection = preferred ? { kind: "video", id: preferred.id } : null;
+        }
+    };
+    const editSegmentBounds = (segment) => {
+        const shot = shots.find((item) => String(item.id) === String(segment?.shotId));
+        const sourceDuration = Math.max(1 / resolutionState.fps, timelineDurationForShot(shot));
+        const sourceStart = Math.max(0, Math.min(sourceDuration - 1 / resolutionState.fps, Number(segment?.sourceStart || 0)));
+        const savedEnd = segment?.sourceEnd;
+        const hasSavedEnd = savedEnd !== null && savedEnd !== undefined && savedEnd !== ""
+            && Number.isFinite(Number(savedEnd)) && Number(savedEnd) > sourceStart;
+        const sourceEnd = Math.max(sourceStart + 1 / resolutionState.fps, Math.min(sourceDuration, hasSavedEnd ? Number(savedEnd) : sourceDuration));
+        return { shot, sourceDuration, sourceStart, sourceEnd, duration: sourceEnd - sourceStart };
+    };
+    const timelineLayout = () => {
+        syncEditSegments();
+        const minimumDuration = 1 / resolutionState.fps;
+        const overlapSeconds = continuityOverlapFrames / resolutionState.fps;
+        let cursor = 0;
+        let previousShotId = "";
+        return videoEditSegments.map((segment, index) => {
+            const { shot, duration } = editSegmentBounds(segment);
+            const inherited = index > 0 && String(segment.shotId) !== previousShotId
+                && Boolean(shot?.inheritPrevious || Number(shot?.contextTrimFrames || 0) > 0);
+            const overlap = inherited ? Math.min(overlapSeconds, Math.max(0, duration - minimumDuration), cursor) : 0;
+            const start = Math.max(0, cursor - overlap);
+            const end = start + duration;
+            cursor = Math.max(cursor, end);
+            previousShotId = String(segment.shotId);
+            return { segment, shot, index, duration, start, end, overlap, inherited };
+        });
+    };
+    const audioTimelineLayout = (videoLayout = timelineLayout()) => {
+        syncEditSegments();
+        const items = audioEditSegments.map((segment, index) => {
+            const bounds = editSegmentBounds(segment);
+            const linkedVideo = videoLayout.find((item) => String(item.segment.id) === String(segment.videoSegmentId));
+            const duration = Math.max(1 / resolutionState.fps, bounds.duration);
+            const start = segment.linked && linkedVideo ? linkedVideo.start : Math.max(0, Number(segment.timelineStart || 0));
+            const inherited = Boolean(segment.linked && linkedVideo?.inherited);
+            const overlap = inherited ? Math.max(0, Number(linkedVideo?.overlap || 0)) : 0;
+            return { segment, shot: bounds.shot, index, duration, start, end: start + duration, sourceStart: bounds.sourceStart, inherited, overlap };
+        });
+        for (const item of items) item.lane = item.segment.linked ? 0 : 1;
+        return items;
     };
     const renderTimeline = () => {
         const ruler = q("[data-time-ruler]");
         const videoTrack = q("[data-video-track]");
+        const audioTrack = q("[data-audio-track]");
         const playhead = q("[data-playhead]");
         const scale = timelineScale;
-        const videoDurations = shots.map((shot) => Math.max(1 / resolutionState.fps, timelineDurationForShot(shot)));
-        const totalDuration = Math.max(40, videoDurations.reduce((sum, value) => sum + value, 0));
+        const layout = timelineLayout();
+        const audioLayout = audioTimelineLayout(layout);
+        const totalDuration = Math.max(40, [...layout, ...audioLayout].reduce((maximum, item) => Math.max(maximum, item.end), 0));
         const width = Math.ceil(totalDuration * scale);
-        for (const element of [ruler, videoTrack]) element.style.width = `${width}px`;
+        for (const element of [ruler, videoTrack, audioTrack]) element.style.width = `${width}px`;
         ruler.innerHTML = Array.from({ length: Math.floor(totalDuration / 2) + 1 }, (_, index) => `<span style="left:${index * 2 * scale}px"><i></i>${index * 2}s</span>`).join("");
-        let cursor = 0;
-        videoTrack.innerHTML = shots.length ? shots.map((shot, index) => {
-            const duration = videoDurations[index];
-            const left = Math.max(0, cursor * scale - (index > 0 ? 1 : 0));
-            cursor += duration;
-            const generated = results.some((result) => String(result.shotId) === String(shot.id));
-            return `<button type="button" class="${shot.id === activeShotId ? "active" : ""} ${generated ? "generated" : ""}" draggable="true" data-timeline-clip="${index}" style="left:${left}px;width:${Math.max(1, duration * scale + (index > 0 ? 1 : 0))}px"><b>分镜 ${String(index + 1).padStart(2, "0")}</b><small>${duration.toFixed(1)}s</small><i></i><i></i></button>`;
+        const segmentLabel = (segment, shot) => {
+            const shotNumber = Math.max(1, shots.findIndex((item) => String(item.id) === String(shot?.id)) + 1);
+            const siblings = videoEditSegments.filter((item) => String(item.shotId) === String(segment.shotId));
+            const part = siblings.findIndex((item) => String(item.id) === String(segment.id));
+            return `分镜${String(shotNumber).padStart(2, "0")}${siblings.length > 1 ? `-${part + 1}` : ""}`;
+        };
+        videoTrack.innerHTML = layout.length ? layout.map(({ segment, shot, index, duration, start, overlap, inherited }) => {
+            const left = Math.max(0, start * scale - (index > 0 ? 1 : 0));
+            const generated = results.some((result) => String(result.shotId) === String(shot?.id));
+            const selected = activeEditSelection?.kind === "video" && String(activeEditSelection.id) === String(segment.id);
+            const overlapLayer = inherited && overlap > 0 ? `<span class="xve-timeline-overlap" style="width:${Math.max(1, overlap * scale)}px" title="与上一分镜重叠 ${continuityOverlapFrames} 帧"></span>` : "";
+            return `<button type="button" class="${selected ? "active" : ""} ${generated ? "generated" : ""} ${inherited ? "inherited" : ""}" draggable="true" data-timeline-clip="${escapeHtml(segment.id)}" style="z-index:${index + 1};left:${left}px;width:${Math.max(1, duration * scale - 1)}px">${overlapLayer}<b>${segmentLabel(segment, shot)}</b><small>${duration.toFixed(1)}s</small><i data-trim-edge="start"></i><i data-trim-edge="end"></i></button>`;
         }).join("") : `<em>暂无视频片段</em>`;
+        audioTrack.innerHTML = audioLayout.length ? audioLayout.map(({ segment, shot, index, duration, start, overlap, inherited, lane }) => {
+            const naturalLeft = Math.max(0, Math.round(start * scale));
+            const width = Math.max(1, Math.round(duration * scale) - 1);
+            const left = naturalLeft;
+            const generated = results.some((result) => String(result.shotId) === String(shot?.id));
+            const selected = activeEditSelection?.kind === "audio" && String(activeEditSelection.id) === String(segment.id);
+            const videoSegment = videoEditSegments.find((item) => String(item.id) === String(segment.videoSegmentId)) || segment;
+            const overlapLayer = inherited && overlap > 0 ? `<span class="xve-timeline-overlap" style="width:${Math.max(1, overlap * scale)}px" title="与上一分镜音频重叠 ${continuityOverlapFrames} 帧"></span>` : "";
+            return `<div class="${selected ? "active" : ""} ${generated ? "generated" : ""} ${inherited ? "inherited" : ""} ${segment.muted ? "muted" : ""} ${segment.linked ? "linked" : "unlinked"}" data-timeline-audio="${escapeHtml(segment.id)}" data-audio-lane="${lane || 0}" style="z-index:${index + 1};left:${left}px;width:${width}px">${overlapLayer}<b>${segmentLabel(videoSegment, shot)}${segment.linked ? "" : " · 独立"}${segment.muted ? " · 静音" : ""}</b><small>${duration.toFixed(1)}s</small><i data-trim-edge="start"></i><i data-trim-edge="end"></i></div>`;
+        }).join("") : `<em>暂无音频片段</em>`;
         root.querySelectorAll("[data-timeline-clip]").forEach((clip) => {
             clip.onclick = (event) => {
+                if (event.target.closest("[data-trim-edge]")) return;
                 updatePrompt();
-                const shot = shots[Number(clip.dataset.timelineClip)];
+                const segment = videoEditSegments.find((item) => String(item.id) === String(clip.dataset.timelineClip));
+                const item = layout.find((entry) => String(entry.segment.id) === String(segment?.id));
+                const shot = item?.shot;
+                if (!segment || !shot) return;
                 const rect = clip.getBoundingClientRect();
-                const duration = timelineDurationForShot(shot);
-                const localSeconds = Math.max(0, Math.min(duration, (event.clientX - rect.left) / Math.max(1, rect.width) * duration));
+                const localSeconds = Math.max(0, Math.min(item.duration, (event.clientX - rect.left) / Math.max(1, rect.width) * item.duration));
+                const sourceSeconds = editSegmentBounds(segment).sourceStart + localSeconds;
+                activeEditSelection = { kind: "video", id: segment.id };
                 activeShotId = shot.id;
-                renderShots(); loadShot(); save();
+                timelinePlayheadSeconds = item.start + localSeconds;
+                renderShots(); loadShot(); syncEditToolbar(); save();
                 let resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
                 if (resultIndex < 0) resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
-                q("[data-playhead]").style.left = `${(resultStartTime({ shotId: shot.id }) + localSeconds) * timelineScale}px`;
-                if (resultIndex >= 0) playResult(resultIndex, localSeconds);
+                q("[data-playhead]").style.left = `${timelinePlayheadSeconds * timelineScale}px`;
+                if (resultIndex >= 0) playResult(resultIndex, sourceSeconds);
             };
             clip.ondragstart = (event) => event.dataTransfer.setData("text/x-xiantu-result-index", clip.dataset.timelineClip);
             clip.ondragover = (event) => event.preventDefault();
             clip.ondrop = (event) => {
                 event.preventDefault();
-                const from = Number(event.dataTransfer.getData("text/x-xiantu-result-index"));
-                const to = Number(clip.dataset.timelineClip);
-                if (!Number.isInteger(from) || from === to || !shots[from]) return;
-                const [moved] = shots.splice(from, 1); shots.splice(to, 0, moved); renderShots(); loadShot(); renderTimeline(); save();
+                const fromId = String(event.dataTransfer.getData("text/x-xiantu-result-index"));
+                const toId = String(clip.dataset.timelineClip);
+                const from = videoEditSegments.findIndex((item) => String(item.id) === fromId);
+                const to = videoEditSegments.findIndex((item) => String(item.id) === toId);
+                if (from < 0 || to < 0 || from === to) return;
+                const [moved] = videoEditSegments.splice(from, 1); videoEditSegments.splice(to, 0, moved); renderTimeline(); save();
+            };
+        });
+        root.querySelectorAll("[data-timeline-audio]").forEach((clip) => {
+            clip.onclick = (event) => {
+                if (clip._xveDragged) { clip._xveDragged = false; return; }
+                if (event.target.closest("[data-trim-edge]")) return;
+                updatePrompt();
+                const segment = audioEditSegments.find((item) => String(item.id) === String(clip.dataset.timelineAudio));
+                const item = audioLayout.find((entry) => String(entry.segment.id) === String(segment?.id));
+                const shot = item?.shot;
+                if (!segment || !shot) return;
+                activeEditSelection = { kind: "audio", id: segment.id };
+                activeShotId = shot.id;
+                timelinePlayheadSeconds = item.start + Math.max(0, Math.min(item.duration, (event.clientX - clip.getBoundingClientRect().left) / Math.max(1, clip.getBoundingClientRect().width) * item.duration));
+                renderShots(); loadShot(); renderTimeline(); syncEditToolbar(); save();
+            };
+            clip.onpointerdown = (event) => {
+                if (event.button !== 0 || event.target.closest("[data-trim-edge]")) return;
+                const segment = audioEditSegments.find((item) => String(item.id) === String(clip.dataset.timelineAudio));
+                if (!segment || segment.linked) return;
+                const originX = event.clientX;
+                const originStart = Math.max(0, Number(segment.timelineStart || 0));
+                let moved = false;
+                const onMove = (moveEvent) => {
+                    const delta = (moveEvent.clientX - originX) / timelineScale;
+                    if (Math.abs(delta) > 0.03) moved = true;
+                    segment.timelineStart = Math.max(0, originStart + delta);
+                    clip.style.left = `${segment.timelineStart * timelineScale}px`;
+                };
+                const onUp = () => {
+                    window.removeEventListener("pointermove", onMove);
+                    window.removeEventListener("pointerup", onUp);
+                    clip._xveDragged = moved;
+                    renderTimeline(); save();
+                };
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onUp, { once: true });
+                event.preventDefault();
+            };
+        });
+        root.querySelectorAll("[data-trim-edge]").forEach((handle) => {
+            handle.onpointerdown = (event) => {
+                if (event.button !== 0) return;
+                const clip = handle.closest("[data-timeline-clip],[data-timeline-audio]");
+                const kind = clip?.hasAttribute("data-timeline-clip") ? "video" : "audio";
+                const id = kind === "video" ? clip?.dataset.timelineClip : clip?.dataset.timelineAudio;
+                const segments = kind === "video" ? videoEditSegments : audioEditSegments;
+                const segment = segments.find((item) => String(item.id) === String(id));
+                if (!segment) return;
+                const bounds = editSegmentBounds(segment);
+                const edge = handle.dataset.trimEdge;
+                const originX = event.clientX;
+                const originStart = bounds.sourceStart;
+                const originEnd = bounds.sourceEnd;
+                const minimum = 1 / resolutionState.fps;
+                const onMove = (moveEvent) => {
+                    const delta = (moveEvent.clientX - originX) / timelineScale;
+                    if (edge === "start") segment.sourceStart = Math.max(0, Math.min(originEnd - minimum, originStart + delta));
+                    else segment.sourceEnd = Math.max(originStart + minimum, Math.min(bounds.sourceDuration, originEnd + delta));
+                    if (kind === "video") {
+                        const linkedAudio = audioEditSegments.find((item) => item.linked && String(item.videoSegmentId) === String(segment.id));
+                        if (linkedAudio) {
+                            linkedAudio.sourceStart = segment.sourceStart;
+                            linkedAudio.sourceEnd = segment.sourceEnd;
+                        }
+                    }
+                    clip.title = `${editSegmentBounds(segment).duration.toFixed(2)} 秒`;
+                };
+                const onUp = () => {
+                    window.removeEventListener("pointermove", onMove);
+                    window.removeEventListener("pointerup", onUp);
+                    renderTimeline(); syncEditToolbar(); save();
+                };
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onUp, { once: true });
+                event.stopPropagation();
+                event.preventDefault();
             };
         });
         const viewport = q("[data-timeline-viewport]");
@@ -1391,10 +1904,11 @@ function createWorkbench(node) {
             const rect = viewport.getBoundingClientRect();
             const left = Math.max(0, Math.min(width, event.clientX - rect.left + viewport.scrollLeft));
             playhead.style.left = `${left}px`;
+            timelinePlayheadSeconds = left / scale;
             return left;
         };
         viewport.onpointerdown = (event) => {
-            if (event.button !== 0 || event.target.closest("[data-timeline-clip]")) return;
+            if (event.button !== 0 || event.target.closest("[data-timeline-clip],[data-timeline-audio]")) return;
             scrubbingTimeline = true;
             viewport.setPointerCapture?.(event.pointerId);
             movePlayhead(event);
@@ -1415,16 +1929,14 @@ function createWorkbench(node) {
         q("[data-timeline-zoom-value]").textContent = `${Math.round(timelineScale / 38 * 100)}%`;
     };
     const resultStartTime = (result) => {
-        let cursor = 0;
-        for (const shot of shots) {
-            if (String(shot.id) === String(result?.shotId)) return cursor;
-            cursor += timelineDurationForShot(shot);
-        }
-        return 0;
+        return timelineLayout().find(({ shot }) => String(shot.id) === String(result?.shotId))?.start || 0;
     };
     const syncPlayheadToVideo = () => {
         if (!previewResult || video.hidden) return;
-        const seconds = resultStartTime(previewResult) + Math.max(0, Number(video.currentTime || 0));
+        const current = Math.max(0, Number(video.currentTime || 0));
+        const selectedSegment = activeEditSelection?.kind === "video" ? videoEditSegments.find((segment) => String(segment.id) === String(activeEditSelection.id)) : null;
+        const selectedLayout = selectedSegment && String(selectedSegment.shotId) === String(previewResult.shotId) ? timelineLayout().find((item) => String(item.segment.id) === String(selectedSegment.id)) : null;
+        const seconds = selectedLayout ? selectedLayout.start + Math.max(0, current - editSegmentBounds(selectedSegment).sourceStart) : resultStartTime(previewResult) + current;
         q("[data-playhead]").style.left = `${seconds * timelineScale}px`;
         const viewport = q("[data-timeline-viewport]");
         const position = seconds * timelineScale;
@@ -1535,19 +2047,72 @@ function createWorkbench(node) {
     video.onpause = syncPlaybackButtons;
     video.onended = advancePlaybackQueue;
     const playTimelineAt = (timelineSeconds) => {
-        let cursor = 0;
-        for (const shot of shots) {
-            const duration = timelineDurationForShot(shot);
-            if (timelineSeconds <= cursor + duration) {
+        const matching = timelineLayout().filter(({ start, end }) => timelineSeconds >= start && timelineSeconds <= end).at(-1);
+        if (matching) {
+                const { segment, shot, start } = matching;
+                activeEditSelection = { kind: "video", id: segment.id };
                 activeShotId = shot.id;
-                renderShots(); loadShot(); save();
+                renderShots(); loadShot(); syncEditToolbar(); save();
                 let resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
                 if (resultIndex < 0) resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
-                if (resultIndex >= 0) playResult(resultIndex, Math.max(0, timelineSeconds - cursor));
-                return;
-            }
-            cursor += duration;
+                if (resultIndex >= 0) playResult(resultIndex, editSegmentBounds(segment).sourceStart + Math.max(0, timelineSeconds - start));
         }
+    };
+    const selectedVideoEditSegment = () => activeEditSelection?.kind === "video" ? videoEditSegments.find((segment) => String(segment.id) === String(activeEditSelection.id)) : null;
+    const selectedAudioEditSegment = () => activeEditSelection?.kind === "audio" ? audioEditSegments.find((segment) => String(segment.id) === String(activeEditSelection.id)) : null;
+    const syncEditToolbar = () => {
+        const selectedVideo = selectedVideoEditSegment();
+        const selectedAudio = selectedAudioEditSegment();
+        q("[data-edit-split]").disabled = !selectedVideo;
+        q("[data-edit-delete]").disabled = !selectedVideo && !selectedAudio;
+        q("[data-edit-link]").disabled = !selectedAudio;
+        q("[data-edit-link]").textContent = selectedAudio?.linked ? "音画解绑" : "音画联动";
+        q("[data-edit-mute]").disabled = !selectedAudio;
+        q("[data-edit-mute]").textContent = selectedAudio?.muted ? "恢复声音" : "静音";
+        q("[data-edit-volume]").disabled = !selectedAudio;
+        q("[data-edit-volume]").value = String(Math.round((selectedAudio?.volume ?? 1) * 100));
+        q("[data-edit-volume-value]").textContent = `${Math.round((selectedAudio?.volume ?? 1) * 100)}%`;
+        q("[data-edit-fade-in]").disabled = !selectedAudio;
+        q("[data-edit-fade-out]").disabled = !selectedAudio;
+        q("[data-edit-fade-in]").value = String(selectedAudio?.fadeIn || 0);
+        q("[data-edit-fade-out]").value = String(selectedAudio?.fadeOut || 0);
+    };
+    const splitSelectedVideoSegment = () => {
+        const segment = selectedVideoEditSegment();
+        const index = videoEditSegments.indexOf(segment);
+        const item = timelineLayout().find((entry) => String(entry.segment.id) === String(segment?.id));
+        if (!segment || index < 0 || !item) return;
+        const bounds = editSegmentBounds(segment);
+        const local = timelinePlayheadSeconds - item.start;
+        const minimum = Math.max(0.1, 2 / resolutionState.fps);
+        if (local < minimum || local > bounds.duration - minimum) {
+            q("[data-edit-split]").title = "请先把播放头放在选中片段内部，且距离边缘至少 0.1 秒";
+            return;
+        }
+        const splitAt = bounds.sourceStart + local;
+        const first = { ...segment, id: makeId(), sourceStart: bounds.sourceStart, sourceEnd: splitAt };
+        const second = { ...segment, id: makeId(), sourceStart: splitAt, sourceEnd: bounds.sourceEnd };
+        videoEditSegments.splice(index, 1, first, second);
+        const linkedIndex = audioEditSegments.findIndex((audio) => audio.linked && String(audio.videoSegmentId) === String(segment.id));
+        if (linkedIndex >= 0) {
+            const audio = audioEditSegments[linkedIndex];
+            audioEditSegments.splice(linkedIndex, 1,
+                { ...audio, id: makeId(), videoSegmentId: first.id, sourceStart: bounds.sourceStart, sourceEnd: splitAt },
+                { ...audio, id: makeId(), videoSegmentId: second.id, sourceStart: splitAt, sourceEnd: bounds.sourceEnd });
+        }
+        activeEditSelection = { kind: "video", id: second.id };
+        renderTimeline(); syncEditToolbar(); save();
+    };
+    const deleteSelectedEditSegment = () => {
+        const videoSegment = selectedVideoEditSegment();
+        const audioSegment = selectedAudioEditSegment();
+        if (videoSegment) {
+            videoEditSegments = videoEditSegments.filter((segment) => String(segment.id) !== String(videoSegment.id));
+            audioEditSegments = audioEditSegments.filter((segment) => !(segment.linked && String(segment.videoSegmentId) === String(videoSegment.id)));
+            if (!videoEditSegments.some((segment) => String(segment.shotId) === String(videoSegment.shotId))) excludedTimelineShotIds.add(String(videoSegment.shotId));
+        } else if (audioSegment) audioEditSegments = audioEditSegments.filter((segment) => String(segment.id) !== String(audioSegment.id));
+        activeEditSelection = null;
+        renderTimeline(); syncEditToolbar(); save();
     };
     const openOutputFolder = async () => {
         const response = await api.fetchApi("/xiantu/video-editor/open-output", { method: "POST" });
@@ -1654,7 +2219,7 @@ function createWorkbench(node) {
     q("[data-library-select-none]").onclick = () => { libraryAssets.forEach((asset) => { asset.selected = false; }); renderLibrary(); };
     q("[data-library-delete]").onclick = async () => {
         const selected = libraryAssets.filter((asset) => asset.selected);
-        if (!selected.length || !window.confirm(`确认从公共资产库删除 ${selected.length} 个资产？已经应用到分镜的 input 副本不会删除。`)) return;
+        if (!selected.length || !await openConfirmDialog({ title: "删除资产", message: `确认从公共资产库删除 ${selected.length} 个资产？已经应用到分镜的 input 副本不会删除。`, confirmText: "确认删除" })) return;
         try {
             await commonAssetRequest("/xiantu/video-editor/common-assets/delete", {
                 method: "POST",
@@ -1662,7 +2227,7 @@ function createWorkbench(node) {
                 body: JSON.stringify({ ids: selected.map((asset) => asset.id) }),
             });
             await loadLibraryAssets(); renderLibrary();
-        } catch (error) { alert(String(error?.message || error)); }
+        } catch (error) { showDirectorError(String(error?.message || error)); }
     };
     q("[data-library-apply]").onclick = applyLibrarySelection;
     const libraryGrid = q("[data-library-grid]");
@@ -1671,7 +2236,7 @@ function createWorkbench(node) {
 
     q("[data-add-shot]").onclick = () => {
         updatePrompt();
-        const shot = { id: makeId(), title: `分镜 ${shots.length + 1}`, selected: true, prompt: "", mode: activeShot()?.mode || "reference", seconds: activeShot()?.seconds || 5, inheritPrevious: true, referenceSize: activeShot()?.referenceSize || referenceSize };
+        const shot = ensureModePrompts({ id: makeId(), title: `分镜 ${shots.length + 1}`, selected: true, prompt: "", prompts: {}, mode: activeShot()?.mode || "reference", seconds: activeShot()?.seconds || 5, inheritPrevious: true, referenceSize: activeShot()?.referenceSize || referenceSize, functionSelections: {} });
         shots.push(shot); activeShotId = shot.id; renderShots(); loadShot(); save();
     };
     q("[data-delete-shot]").onclick = () => {
@@ -1687,17 +2252,499 @@ function createWorkbench(node) {
         assetList.forEach((asset) => URL.revokeObjectURL(asset.url)); assetList.splice(0); selectedAssetIds.clear();
         referenceSize = "match";
         referenceSizeExplicit = false;
-        shots = [{ id: makeId(), title: "分镜 1", selected: true, prompt: "", mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "match" }];
+        shots = [ensureModePrompts({ id: makeId(), title: "分镜 1", selected: true, prompt: "", prompts: {}, mode: "reference", seconds: 5, inheritPrevious: false, referenceSize: "match" })];
         activeShotId = shots[0].id; renderShots(); loadShot(); save();
     };
     q("[data-prev-shot]").onclick = () => moveShot(-1);
     q("[data-next-shot]").onclick = () => moveShot(1);
-    q("[data-expand-shots]").onclick = () => {
-        shotsExpanded = !shotsExpanded;
-        q(".xve-director").classList.toggle("shots-expanded", shotsExpanded);
-        q("[data-expand-shots]").innerHTML = `${shotsExpanded ? "收起分镜" : "展开分镜"} (<b data-shot-total>${shots.length}</b>) <span>${shotsExpanded ? "⌃" : "⌄"}</span>`;
+    const placeholderDialog = q("[data-placeholder-dialog]");
+    const closePlaceholderDialog = () => { placeholderDialog.hidden = true; };
+    let activeFunctionTagFilter = "speed";
+    const functionTaggedNodes = (category) => (node.graph?._nodes || app.graph?._nodes || [])
+        .filter((item) => item !== node && readFunctionTag(item)?.category === category);
+    const commitNodeMode = (item, mode) => {
+        if (Number(item.mode || 0) === mode) return;
+        item.mode = mode;
+        item.graph?.change?.();
+        item.graph?.setDirtyCanvas?.(true, true);
     };
-    q("[data-select-all]").onclick = () => { const allSelected = shots.every((shot) => shot.selected); shots.forEach((shot) => { shot.selected = !allSelected; }); renderShots(); save(); };
+    const functionNodeId = (item) => String(item?.id ?? "");
+    const normalizedNodeMode = (value, fallback = 0) => [0, 2, 4].includes(Number(value)) ? Number(value) : fallback;
+	    const currentFunctionNodeModes = (category) => Object.fromEntries(functionTaggedNodes(category).map((item) => [functionNodeId(item), normalizedNodeMode(item.mode)]));
+	    const currentLoraNodeModes = () => currentFunctionNodeModes("lora");
+    const ensureFunctionSelectionDefaults = () => {
+	        const samplingNodes = functionTaggedNodes("sampling");
+	        const loraNodes = functionTaggedNodes("lora");
+        const saved = functionSelectionDefaults && typeof functionSelectionDefaults === "object" ? functionSelectionDefaults : {};
+        const savedSamplingId = String(saved.samplingNodeId || "");
+        const defaultSampling = samplingNodes.find((item) => functionNodeId(item) === savedSamplingId)
+            || samplingNodes.find((item) => Number(item.mode || 0) === 0)
+            || samplingNodes[0]
+            || null;
+        const savedLoraModes = saved.loraNodeModes && typeof saved.loraNodeModes === "object" ? saved.loraNodeModes : {};
+	        functionSelectionDefaults = {
+	            samplingNodeId: defaultSampling ? functionNodeId(defaultSampling) : "",
+	            loraNodeModes: Object.fromEntries(loraNodes.map((item) => {
+	                const id = functionNodeId(item);
+	                return [id, normalizedNodeMode(savedLoraModes[id], normalizedNodeMode(item.mode))];
+	            })),
+	        };
+	        for (const category of ["speed", "optimization"]) {
+	            const key = `${category}NodeModes`;
+	            const savedModes = saved[key] && typeof saved[key] === "object" ? saved[key] : {};
+	            functionSelectionDefaults[key] = Object.fromEntries(functionTaggedNodes(category).map((item) => {
+	                const id = functionNodeId(item);
+	                return [id, normalizedNodeMode(savedModes[id], normalizedNodeMode(item.mode))];
+	            }));
+	        }
+	        return functionSelectionDefaults;
+	    };
+	    const shotHasSamplingOverride = (shot) => Boolean(shot?.functionSelections?.samplingNodeId);
+	    const shotHasLoraOverride = (shot) => Boolean(shot?.functionSelections?.loraNodeModes
+	        && typeof shot.functionSelections.loraNodeModes === "object"
+	        && Object.keys(shot.functionSelections.loraNodeModes).some((id) => !functionSelectionScopes.loraGlobalByNode?.[id]));
+	    const NODE_MODE_LABELS = { 0: "启用", 4: "忽略", 2: "关闭" };
+	    const NODE_MODE_VALUES = { "启用": 0, "忽略": 4, "关闭": 2, "0": 0, "4": 4, "2": 2 };
+	    const nodeModeSelectionText = (category, modes = null) => functionTaggedNodes(category).map((item) => {
+	        const id = functionNodeId(item);
+	        const mode = normalizedNodeMode(modes?.[id], normalizedNodeMode(item.mode));
+	        return `${String(item.title || item.type || "未命名节点")} [${id}]=${NODE_MODE_LABELS[mode]}`;
+	    }).join("；");
+	    const samplingSelectionText = (shot) => {
+	        const defaults = ensureFunctionSelectionDefaults();
+	        const id = functionSelectionScopes.samplingGlobal
+	            ? String(defaults.samplingNodeId || "")
+	            : (shotHasSamplingOverride(shot) ? String(shot.functionSelections.samplingNodeId) : String(defaults.samplingNodeId || ""));
+	        if (!id) return "默认";
+	        const item = functionTaggedNodes("sampling").find((candidate) => functionNodeId(candidate) === id);
+	        return item ? `${String(item.title || item.type || "未命名节点")} [${id}]` : `节点 [${id}]`;
+	    };
+	    const samplerPairTextForShot = (shot) => {
+	        const tagged = functionTaggedNodes("sampling");
+	        const defaults = ensureFunctionSelectionDefaults();
+	        const requestedId = !functionSelectionScopes.samplingGlobal && shotHasSamplingOverride(shot)
+	            ? String(shot.functionSelections.samplingNodeId)
+	            : String(defaults.samplingNodeId || "");
+	        const selected = tagged.find((item) => functionNodeId(item) === requestedId) || tagged[0] || null;
+	        return selected ? samplerPairKeyFor(selected, tagged) : "";
+	    };
+	    const effectiveNodeModesForShot = (shot, category) => {
+	        const defaults = ensureFunctionSelectionDefaults();
+	        const key = `${category}NodeModes`;
+	        const overrides = shot?.functionSelections?.[key] && typeof shot.functionSelections[key] === "object" ? shot.functionSelections[key] : {};
+	        return Object.fromEntries(functionTaggedNodes(category).map((item) => {
+	            const id = functionNodeId(item);
+	            const forceGlobal = (category === "lora" && Boolean(functionSelectionScopes.loraGlobalByNode?.[id]))
+	                || (["speed", "optimization"].includes(category) && functionSelectionScopes.speedOptimizationGlobal);
+	            const mode = forceGlobal
+	                ? normalizedNodeMode(defaults[key]?.[id], normalizedNodeMode(item.mode))
+	                : normalizedNodeMode(overrides[id], normalizedNodeMode(defaults[key]?.[id], normalizedNodeMode(item.mode)));
+	            return [id, mode];
+	        }));
+	    };
+	    const selectionTextForShot = (shot, category) => nodeModeSelectionText(category, effectiveNodeModesForShot(shot, category));
+	    const loraSelectionText = (shot) => selectionTextForShot(shot, "lora") || "默认";
+	    const loraGlobalSelectionText = () => functionTaggedNodes("lora")
+	        .filter((item) => Boolean(functionSelectionScopes.loraGlobalByNode?.[functionNodeId(item)]))
+	        .map((item) => `${String(item.title || item.type || "未命名节点")} [${functionNodeId(item)}]`)
+	        .join("；");
+	    const parseNodeModeSelection = (value, category) => {
+	        const text = String(value || "").trim();
+	        if (!text || text === "默认") return null;
+	        const tagged = functionTaggedNodes(category);
+	        const parsed = {};
+	        for (const part of text.split(/[；;]/).map((item) => item.trim()).filter(Boolean)) {
+	            const modeMatch = part.match(/(?:=|:|：)\s*(启用|忽略|关闭|0|2|4)\s*$/);
+	            if (!modeMatch) continue;
+	            const idMatch = part.match(/\[(\d+)\]/) || part.match(/节点\s*(\d+)/);
+	            const name = part.replace(/\s*\[\d+\].*$/, "").replace(/\s*(?:=|:|：).*$/, "").trim();
+	            const target = (idMatch ? tagged.find((item) => functionNodeId(item) === idMatch[1]) : null)
+	                || tagged.find((item) => String(item.title || item.type || "").trim() === name);
+	            if (target) parsed[functionNodeId(target)] = NODE_MODE_VALUES[modeMatch[1]];
+	        }
+	        return Object.keys(parsed).length ? parsed : null;
+	    };
+	    const parseSamplingSelection = (value) => {
+	        const text = String(value || "").trim();
+	        if (!text || text === "默认") return "";
+	        const tagged = functionTaggedNodes("sampling");
+	        const idMatch = text.match(/\[(\d+)\]/) || text.match(/节点\s*(\d+)/);
+	        if (idMatch && tagged.some((item) => functionNodeId(item) === idMatch[1])) return idMatch[1];
+	        const name = text.replace(/\s*\[\d+\].*$/, "").trim();
+	        const target = tagged.find((item) => String(item.title || item.type || "").trim() === name);
+	        return target ? functionNodeId(target) : "";
+	    };
+	    const parseNodeSelectionIds = (value, category) => {
+	        const text = String(value || "").trim();
+	        if (!text) return [];
+	        const tagged = functionTaggedNodes(category);
+	        const ids = [];
+	        for (const part of text.split(/[；;]/).map((item) => item.trim()).filter(Boolean)) {
+	            const idMatch = part.match(/\[(\d+)\]/) || part.match(/节点\s*(\d+)/);
+	            const name = part.replace(/\s*\[\d+\].*$/, "").trim();
+	            const target = (idMatch ? tagged.find((item) => functionNodeId(item) === idMatch[1]) : null)
+	                || tagged.find((item) => String(item.title || item.type || "").trim() === name);
+	            if (target) ids.push(functionNodeId(target));
+	        }
+	        return [...new Set(ids)];
+	    };
+	    const applyImportedGlobalNodeModes = (rows, valueAt, category, ...headers) => {
+	        const text = rows.map((row) => valueAt(row, ...headers)).find((value) => value && value !== "默认");
+	        const modes = parseNodeModeSelection(text, category);
+	        if (!modes) return;
+	        for (const item of functionTaggedNodes(category)) {
+	            const id = functionNodeId(item);
+	            if (Object.prototype.hasOwnProperty.call(modes, id)) commitNodeMode(item, normalizedNodeMode(modes[id], normalizedNodeMode(item.mode)));
+	        }
+	        ensureFunctionSelectionDefaults()[`${category}NodeModes`] = { ...currentFunctionNodeModes(category) };
+	    };
+    const normalizeSamplingSelection = (tagged, preferred = null) => {
+        if (!tagged.length) return;
+        const enabled = tagged.filter((item) => Number(item.mode || 0) === 0);
+        const selected = preferred || enabled[0] || tagged[0];
+        commitNodeMode(selected, 0);
+        for (const item of enabled) {
+            if (item !== selected) commitNodeMode(item, 4);
+        }
+    };
+    const samplerNameOf = (item) => {
+        const widget = (item?.widgets || []).find((candidate) => String(candidate?.name || "").toLowerCase() === "sampler_name");
+        return String(widget?.value || "").trim().toLowerCase();
+    };
+    const samplerChoiceNodes = () => {
+        const graph = node.graph || app.graph;
+        const all = (graph?._nodes || []).filter((item) => item !== node
+            && samplerNameOf(item)
+            && (item.outputs || []).some((output) => String(output?.type || "").toUpperCase() === "SAMPLER"));
+        const graphLink = (linkId) => graph?.links instanceof Map ? graph.links.get(linkId) : graph?.links?.[linkId];
+        const connected = all.filter((item) => (item.outputs || []).some((output) => (output?.links || []).some((linkId) => {
+            const link = graphLink(linkId);
+            const targetId = Array.isArray(link) ? link[3] : link?.target_id;
+            const target = graph?.getNodeById?.(targetId) || (graph?._nodes || []).find((candidate) => String(candidate?.id) === String(targetId));
+            return String(target?.comfyClass || target?.type || "") === "XiantuSamplerConditionalRelay";
+        })));
+        return connected;
+    };
+    const ensureSamplerPairMappings = (tagged, candidates = samplerChoiceNodes()) => {
+        const candidateIds = new Set(candidates.map(functionNodeId));
+        samplingSamplerPairs = Object.fromEntries(Object.entries(samplingSamplerPairs).filter(([samplingId, samplerId]) =>
+            tagged.some((item) => functionNodeId(item) === samplingId) && candidateIds.has(String(samplerId))));
+        const usedSamplerIds = new Set(Object.values(samplingSamplerPairs));
+        for (let index = 0; index < tagged.length; index += 1) {
+            const samplingId = functionNodeId(tagged[index]);
+            if (samplingSamplerPairs[samplingId]) continue;
+            let paired = null;
+            if (index < 3) paired = candidates.find((item) => samplerNameOf(item) === "er_sde") || null;
+            else if (index === 3) paired = candidates.find((item) => samplerNameOf(item) === "res_multistep") || null;
+            if (!paired) paired = candidates.find((item) => !usedSamplerIds.has(functionNodeId(item))) || null;
+            if (!paired) paired = candidates[0] || null;
+            if (paired) {
+                samplingSamplerPairs[samplingId] = functionNodeId(paired);
+                usedSamplerIds.add(functionNodeId(paired));
+            }
+        }
+        return samplingSamplerPairs;
+    };
+    const samplerPairFor = (selected, tagged, candidates = samplerChoiceNodes()) => {
+        if (!selected) return null;
+        ensureSamplerPairMappings(tagged, candidates);
+        const pairedId = samplingSamplerPairs[functionNodeId(selected)];
+        return candidates.find((item) => functionNodeId(item) === String(pairedId || "")) || null;
+    };
+    const samplerPairKeyFor = (selected, tagged) => samplerNameOf(samplerPairFor(selected, tagged));
+    const syncSamplerPairForSamplingSelection = (tagged) => {
+        const selected = tagged.find((item) => Number(item.mode || 0) === 0) || tagged[0] || null;
+        const candidates = samplerChoiceNodes();
+        const paired = samplerPairFor(selected, tagged, candidates);
+        const pairKey = samplerNameOf(paired);
+        for (const candidate of candidates) commitNodeMode(candidate, candidate === paired ? 0 : 4);
+        return { selected, pairKey, paired, candidates };
+    };
+    const applyShotFunctionSelections = (shot) => {
+        if (!shot) return;
+        ensureModePrompts(shot);
+        const defaults = ensureFunctionSelectionDefaults();
+        const samplingNodes = functionTaggedNodes("sampling");
+        const requestedSamplingId = !functionSelectionScopes.samplingGlobal && shotHasSamplingOverride(shot)
+            ? String(shot.functionSelections.samplingNodeId)
+            : String(defaults.samplingNodeId || "");
+        const selectedSampling = samplingNodes.find((item) => functionNodeId(item) === requestedSamplingId)
+            || samplingNodes.find((item) => functionNodeId(item) === String(defaults.samplingNodeId || ""))
+            || samplingNodes[0]
+            || null;
+        normalizeSamplingSelection(samplingNodes, selectedSampling);
+        syncSamplerPairForSamplingSelection(samplingNodes);
+	        const loraModes = shot?.functionSelections?.loraNodeModes && typeof shot.functionSelections.loraNodeModes === "object" ? shot.functionSelections.loraNodeModes : {};
+        for (const item of functionTaggedNodes("lora")) {
+            const id = functionNodeId(item);
+	            const mode = functionSelectionScopes.loraGlobalByNode?.[id]
+	                ? normalizedNodeMode(defaults.loraNodeModes?.[id], normalizedNodeMode(item.mode))
+	                : normalizedNodeMode(loraModes[id], normalizedNodeMode(defaults.loraNodeModes?.[id], normalizedNodeMode(item.mode)));
+	            commitNodeMode(item, mode);
+	        }
+	        for (const category of ["speed", "optimization"]) {
+	            const key = `${category}NodeModes`;
+	            const modes = !functionSelectionScopes.speedOptimizationGlobal && shot?.functionSelections?.[key] && typeof shot.functionSelections[key] === "object" ? shot.functionSelections[key] : {};
+	            for (const item of functionTaggedNodes(category)) {
+	                const id = functionNodeId(item);
+	                commitNodeMode(item, normalizedNodeMode(modes[id], normalizedNodeMode(defaults[key]?.[id], normalizedNodeMode(item.mode))));
+	            }
+	        }
+    };
+    const rememberShotSamplingSelection = (shot) => {
+        if (!shot) return;
+        ensureModePrompts(shot);
+        const selected = functionTaggedNodes("sampling").find((item) => Number(item.mode || 0) === 0);
+        if (!selected) return;
+        const id = functionNodeId(selected);
+        if (functionSelectionScopes.samplingGlobal) {
+            ensureFunctionSelectionDefaults().samplingNodeId = id;
+            for (const item of shots) delete ensureModePrompts(item).functionSelections.samplingNodeId;
+        } else {
+            shot.functionSelections.samplingNodeId = id;
+        }
+    };
+	    const rememberShotLoraSelection = (shot, item) => {
+        if (!shot) return;
+        ensureModePrompts(shot);
+	        const id = functionNodeId(item);
+	        const mode = normalizedNodeMode(item.mode);
+	        const defaults = ensureFunctionSelectionDefaults();
+	        if (functionSelectionScopes.loraGlobalByNode?.[id]) {
+	            defaults.loraNodeModes[id] = mode;
+	            for (const target of shots) {
+	                ensureModePrompts(target);
+	                if (target.functionSelections.loraNodeModes) delete target.functionSelections.loraNodeModes[id];
+	            }
+	        } else {
+	            shot.functionSelections.loraNodeModes ??= {};
+	            shot.functionSelections.loraNodeModes[id] = mode;
+	        }
+	    };
+	    const rememberShotSpeedOptimizationSelection = (shot, category) => {
+	        if (!shot || !["speed", "optimization"].includes(category)) return;
+	        ensureModePrompts(shot);
+	        const key = `${category}NodeModes`;
+	        const modes = currentFunctionNodeModes(category);
+	        if (functionSelectionScopes.speedOptimizationGlobal) {
+	            ensureFunctionSelectionDefaults()[key] = modes;
+	            for (const target of shots) delete ensureModePrompts(target).functionSelections[key];
+	        } else {
+	            shot.functionSelections[key] = modes;
+	        }
+	    };
+    const renderShotFunctionSelectionStatus = () => {
+        const shot = activeShot();
+        const samplingState = q("[data-sampling-shot-state]");
+        const samplingDefault = q("[data-sampling-use-default]");
+        const loraState = q("[data-lora-shot-state]");
+        const loraDefault = q("[data-lora-use-default]");
+        const samplingGlobal = q("[data-sampling-global]");
+        const speedOptimizationGlobal = q("[data-speed-optimization-global]");
+        if (samplingGlobal) samplingGlobal.checked = Boolean(functionSelectionScopes.samplingGlobal);
+        if (speedOptimizationGlobal) speedOptimizationGlobal.checked = Boolean(functionSelectionScopes.speedOptimizationGlobal);
+        if (samplingState) samplingState.textContent = functionSelectionScopes.samplingGlobal
+            ? "全局设置"
+            : (shotHasSamplingOverride(shot) ? "当前分镜：独立设置" : "当前分镜：默认设置");
+        if (samplingDefault) samplingDefault.disabled = functionSelectionScopes.samplingGlobal || !shotHasSamplingOverride(shot);
+        if (loraState) loraState.textContent = shotHasLoraOverride(shot) ? "当前分镜含独立设置" : "当前分镜：默认设置";
+        if (loraDefault) loraDefault.disabled = !shotHasLoraOverride(shot);
+    };
+    const renderSamplerPairing = () => {
+        const list = q("[data-sampler-pair-list]");
+        if (!list) return;
+        const tagged = functionTaggedNodes("sampling");
+        const { pairKey, paired, candidates } = syncSamplerPairForSamplingSelection(tagged);
+        list.replaceChildren();
+        const ruleFor = (name) => name === "er_sde"
+            ? "上方 3 个 SIGMAS 专用"
+            : (name === "res_multistep" ? "原最下方 SIGMAS 专用" : "与新增 SIGMAS 动态配对");
+        const definitions = candidates.map((item) => ({ name: samplerNameOf(item), rule: ruleFor(samplerNameOf(item)), item }));
+        for (const definition of definitions) {
+            const item = definition.item || candidates.find((candidate) => samplerNameOf(candidate) === definition.name) || null;
+            const active = pairKey === definition.name && paired === item;
+            const row = document.createElement("article");
+            row.className = `xve-sampler-pair-row${active ? " active" : ""}${item ? "" : " missing"}`;
+            row.innerHTML = `<div><b>${escapeHtml(definition.name)}</b><span>${escapeHtml(definition.rule)}${item ? ` · 节点 ${escapeHtml(String(item.id ?? "-"))}` : " · 未找到对应采样器节点"}</span></div><button type="button" disabled>${item ? (active ? "已自动匹配" : "未匹配") : "未找到"}</button>`;
+            list.appendChild(row);
+        }
+        if (!definitions.length) {
+            const empty = document.createElement("div");
+            empty.className = "xve-function-tag-empty";
+            empty.textContent = "暂无接入采样器中转的采样器选择节点";
+            list.appendChild(empty);
+        }
+    };
+    const fillFunctionTaggedNodeList = (list, category) => {
+        if (!list) return;
+        const tagged = functionTaggedNodes(category);
+        if (category === "sampling") {
+            normalizeSamplingSelection(tagged);
+            ensureSamplerPairMappings(tagged);
+        }
+        list.replaceChildren();
+        for (const item of tagged) {
+            const tag = readFunctionTag(item);
+            const row = document.createElement("article");
+            row.className = "xve-function-tag-row";
+            let savedNote = String(tag?.note || "").trim().slice(0, 160);
+            const loraGlobalControl = category === "lora"
+                ? `<label class="xve-row-global"><input type="checkbox" data-lora-node-global${functionSelectionScopes.loraGlobalByNode?.[functionNodeId(item)] ? " checked" : ""}> 全局</label>`
+                : "";
+            const samplingPairControl = category === "sampling"
+                ? `<label class="xve-sampling-pair">搭配<select data-sampling-pair>${samplerChoiceNodes().map((sampler) => `<option value="${escapeHtml(functionNodeId(sampler))}"${samplingSamplerPairs[functionNodeId(item)] === functionNodeId(sampler) ? " selected" : ""}>${escapeHtml(samplerNameOf(sampler))}</option>`).join("")}</select></label>`
+                : "";
+            row.classList.toggle("has-row-global", category === "lora");
+            row.classList.toggle("has-sampling-pair", category === "sampling");
+            row.innerHTML = `<div><b>${escapeHtml(String(item.title || item.type || "未命名节点"))}</b><span>${escapeHtml(functionTagDisplayName(tag))} · 节点 ${escapeHtml(String(item.id ?? "-"))}</span></div><div class="xve-function-tag-note-box"><span class="xve-function-tag-note-text${savedNote ? "" : " empty"}" data-node-note-text>${escapeHtml(savedNote || "暂无备注")}</span><input class="xve-function-tag-note" type="text" maxlength="160" value="${escapeHtml(savedNote)}" placeholder="备注这个节点的功能" hidden></div>${samplingPairControl}${loraGlobalControl}<button type="button" class="xve-function-tag-note-edit" data-node-note-edit>编辑</button><div class="xve-function-tag-modes"><button type="button" data-node-mode="0">启用</button><button type="button" data-node-mode="4">忽略</button><button type="button" data-node-mode="2">关闭</button></div>`;
+            const noteText = row.querySelector("[data-node-note-text]");
+            const noteInput = row.querySelector(".xve-function-tag-note");
+            const noteEdit = row.querySelector("[data-node-note-edit]");
+            let editingNote = false;
+            const finishNoteEdit = (commit) => {
+                if (!editingNote) return;
+                editingNote = false;
+                let nextNote = savedNote;
+                if (commit) nextNote = String(noteInput.value || "").trim().slice(0, 160);
+                noteInput.value = nextNote;
+                noteInput.hidden = true;
+                noteText.hidden = false;
+                noteText.textContent = nextNote || "暂无备注";
+                noteText.classList.toggle("empty", !nextNote);
+                noteEdit.textContent = "编辑";
+                if (!commit || nextNote === savedNote) return;
+                item.properties ??= {};
+                const currentTag = readFunctionTag(item) || { category, note: "" };
+                item.properties[FUNCTION_TAG] = { ...currentTag, note: nextNote };
+                savedNote = nextNote;
+                item.graph?.change?.();
+                item.graph?.setDirtyCanvas?.(true, true);
+            };
+            noteEdit.onclick = () => {
+                if (editingNote) { finishNoteEdit(true); return; }
+                editingNote = true;
+                noteText.hidden = true;
+                noteInput.hidden = false;
+                noteEdit.textContent = "保存";
+                noteInput.focus();
+                noteInput.select();
+            };
+            noteInput.onkeydown = (event) => {
+                if (event.key === "Enter") { event.preventDefault(); finishNoteEdit(true); }
+                if (event.key === "Escape") { event.preventDefault(); finishNoteEdit(false); }
+            };
+            const loraGlobal = row.querySelector("[data-lora-node-global]");
+            if (loraGlobal) {
+                loraGlobal.onchange = () => {
+                    const id = functionNodeId(item);
+                    functionSelectionScopes.loraGlobalByNode[id] = Boolean(loraGlobal.checked);
+                    if (loraGlobal.checked) {
+                        const defaults = ensureFunctionSelectionDefaults();
+                        defaults.loraNodeModes[id] = normalizedNodeMode(item.mode);
+                        for (const target of shots) {
+                            ensureModePrompts(target);
+                            if (target.functionSelections.loraNodeModes) delete target.functionSelections.loraNodeModes[id];
+                        }
+                    }
+                    renderLoraTaggedNodes();
+                    save();
+                };
+            }
+            const samplingPair = row.querySelector("[data-sampling-pair]");
+            if (samplingPair) {
+                samplingPair.onchange = () => {
+                    samplingSamplerPairs[functionNodeId(item)] = String(samplingPair.value || "");
+                    syncSamplerPairForSamplingSelection(tagged);
+                    renderSamplingTaggedNodes();
+                    save();
+                };
+            }
+            row.querySelectorAll("[data-node-mode]").forEach((button) => {
+                const mode = Number(button.dataset.nodeMode);
+                button.classList.toggle("active", Number(item.mode || 0) === mode);
+                button.onclick = () => {
+                    if (category === "sampling" && mode === 0) {
+                        for (const candidate of tagged) commitNodeMode(candidate, candidate === item ? 0 : 4);
+                    } else {
+                        const wasEnabled = Number(item.mode || 0) === 0;
+                        commitNodeMode(item, mode);
+                        if (category === "sampling" && wasEnabled && mode !== 0) {
+                            const replacement = tagged.find((candidate) => candidate !== item && Number(candidate.mode || 0) === 0)
+                                || tagged.find((candidate) => candidate !== item);
+                            if (replacement) commitNodeMode(replacement, 0);
+                            else commitNodeMode(item, 0);
+                        }
+                    }
+                    if (activeFunctionTagFilter === category) renderFunctionTaggedNodes();
+                    if (category === "sampling") {
+                        rememberShotSamplingSelection(activeShot());
+                        renderSamplingTaggedNodes();
+                        save();
+                    }
+	                    if (category === "lora") {
+	                        rememberShotLoraSelection(activeShot(), item);
+	                        renderLoraTaggedNodes();
+	                        save();
+	                    }
+	                    if (["speed", "optimization"].includes(category)) {
+	                        rememberShotSpeedOptimizationSelection(activeShot(), category);
+	                        renderFunctionTaggedNodes();
+	                        save();
+	                    }
+	                };
+            });
+            list.appendChild(row);
+        }
+        if (!tagged.length) {
+            const empty = document.createElement("div");
+            empty.className = "xve-function-tag-empty";
+            empty.textContent = `暂无“${FUNCTION_TAG_LABELS[category]}”标记节点，请在节点右键菜单中添加闲兔功能标记。`;
+            list.appendChild(empty);
+        }
+    };
+	    const renderFunctionTaggedNodes = () => {
+	        root.querySelectorAll("[data-function-tag-filter]").forEach((button) => button.classList.toggle("active", button.dataset.functionTagFilter === activeFunctionTagFilter));
+        fillFunctionTaggedNodeList(q("[data-function-tag-list]"), activeFunctionTagFilter);
+        renderShotFunctionSelectionStatus();
+    };
+    const renderSamplingTaggedNodes = () => {
+        fillFunctionTaggedNodeList(q("[data-sampling-tag-list]"), "sampling");
+        renderSamplerPairing();
+        renderShotFunctionSelectionStatus();
+    };
+    const renderLoraTaggedNodes = () => {
+        fillFunctionTaggedNodeList(q("[data-lora-tag-list]"), "lora");
+        renderShotFunctionSelectionStatus();
+    };
+	    const openPlaceholderDialog = () => {
+	        const title = "速度性能优化";
+	        q("[data-placeholder-title]").textContent = title;
+	        applyShotFunctionSelections(activeShot());
+	        renderFunctionTaggedNodes();
+        placeholderDialog.hidden = false;
+        q("[data-placeholder-close]")?.focus();
+    };
+	    root.querySelectorAll("[data-function-tag-filter]").forEach((button) => {
+	        button.onclick = () => { activeFunctionTagFilter = button.dataset.functionTagFilter; renderFunctionTaggedNodes(); };
+	    });
+    q("[data-speed-optimization-global]").onchange = (event) => {
+        functionSelectionScopes.speedOptimizationGlobal = Boolean(event.target.checked);
+        if (functionSelectionScopes.speedOptimizationGlobal) {
+            const defaults = ensureFunctionSelectionDefaults();
+            for (const category of ["speed", "optimization"]) {
+                const key = `${category}NodeModes`;
+                defaults[key] = currentFunctionNodeModes(category);
+                for (const shot of shots) delete ensureModePrompts(shot).functionSelections[key];
+            }
+        }
+        renderFunctionTaggedNodes();
+        save();
+    };
+    root.querySelectorAll("[data-open-placeholder]").forEach((button) => {
+        button.onclick = () => openPlaceholderDialog();
+    });
+    root.querySelectorAll("[data-placeholder-close]").forEach((button) => { button.onclick = closePlaceholderDialog; });
+    placeholderDialog.onclick = (event) => { if (event.target === placeholderDialog) closePlaceholderDialog(); };
     const sheetFileInput = q("[data-sheet-file]");
     q("[data-download-sheet]").onclick = downloadSheet;
     q("[data-upload-sheet]").onclick = () => sheetFileInput.click();
@@ -1780,20 +2827,16 @@ function createWorkbench(node) {
         endRange.collapse(false);
         selection?.removeAllRanges();
         selection?.addRange(endRange);
+        refreshMentionMenu();
     };
-    promptEditor.oninput = (event) => {
+    promptEditor.oninput = () => {
         updatePrompt();
-        const editor = event.currentTarget;
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        const insideEditor = range && editor.contains(range.startContainer);
-        if (insideEditor && event.data === "@") {
-            promptMentionRange = range.cloneRange();
-            showMentionMenu();
-        } else {
-            promptMentionRange = null;
-            hideMentionMenu();
-        }
+        refreshMentionMenu();
+    };
+    promptEditor.oncompositionend = refreshMentionMenu;
+    promptEditor.onkeyup = (event) => {
+        if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) return;
+        refreshMentionMenu();
     };
     q("[data-cascade]").onchange = (event) => {
         continuityEnabled = event.target.checked;
@@ -1807,9 +2850,9 @@ function createWorkbench(node) {
                 selectedAssetIds.delete(asset.id);
             }
         }
-        syncContinuityUI(); syncModeUI(); save();
+        syncContinuityUI(); syncModeUI(); renderTimeline(); save();
     };
-    q("[data-continuity-frames]").onchange = (event) => { continuityOverlapFrames = snapContinuityFrames(event.target.value); syncContinuityUI(); save(); };
+    q("[data-continuity-frames]").onchange = (event) => { continuityOverlapFrames = snapContinuityFrames(event.target.value); syncContinuityUI(); renderTimeline(); save(); };
     q("[data-seconds]").onchange = updatePrompt;
     q("[data-video-aspect]").onchange = (event) => {
         resolutionState.aspect = resolutionRatios[event.target.value] ? event.target.value : "16:9";
@@ -1830,10 +2873,60 @@ function createWorkbench(node) {
             save();
         };
     });
+    const sigmaDialog = q("[data-sigma-dialog]");
+    const closeSigmaDialog = () => { sigmaDialog.hidden = true; };
+    q("[data-sigma-open]").onclick = () => {
+        applyShotFunctionSelections(activeShot());
+        renderSamplingTaggedNodes();
+        sigmaDialog.hidden = false;
+        q("[data-sigma-close]")?.focus();
+    };
+    q("[data-sampling-global]").onchange = (event) => {
+        functionSelectionScopes.samplingGlobal = Boolean(event.target.checked);
+        if (functionSelectionScopes.samplingGlobal) {
+            const selected = functionTaggedNodes("sampling").find((item) => Number(item.mode || 0) === 0);
+            if (selected) ensureFunctionSelectionDefaults().samplingNodeId = functionNodeId(selected);
+            for (const shot of shots) delete ensureModePrompts(shot).functionSelections.samplingNodeId;
+        }
+        applyShotFunctionSelections(activeShot());
+        renderSamplingTaggedNodes();
+        save();
+    };
+    q("[data-sampling-use-default]").onclick = () => {
+        const shot = activeShot();
+        if (!shot) return;
+        ensureModePrompts(shot);
+        delete shot.functionSelections.samplingNodeId;
+        applyShotFunctionSelections(shot);
+        renderSamplingTaggedNodes();
+        save();
+    };
+    root.querySelectorAll("[data-sigma-close]").forEach((button) => { button.onclick = closeSigmaDialog; });
+    sigmaDialog.onclick = (event) => { if (event.target === sigmaDialog) closeSigmaDialog(); };
+    const loraDialog = q("[data-lora-dialog]");
+    const closeLoraDialog = () => { loraDialog.hidden = true; };
+    q("[data-lora-open]").onclick = () => { applyShotFunctionSelections(activeShot()); renderLoraTaggedNodes(); loraDialog.hidden = false; q("[data-lora-close]")?.focus(); };
+    q("[data-lora-use-default]").onclick = () => {
+        const shot = activeShot();
+        if (!shot) return;
+        ensureModePrompts(shot);
+        delete shot.functionSelections.loraNodeModes;
+        applyShotFunctionSelections(shot);
+        renderLoraTaggedNodes();
+        save();
+    };
+    root.querySelectorAll("[data-lora-close]").forEach((button) => { button.onclick = closeLoraDialog; });
+    loraDialog.onclick = (event) => { if (event.target === loraDialog) closeLoraDialog(); };
     root.querySelectorAll("[data-mode]").forEach((button) => button.onclick = () => {
-        activeShot().mode = button.dataset.mode;
-        root.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
+        const shot = activeShot();
+        if (!shot || shot.mode === button.dataset.mode) return;
+        updatePrompt();
+        ensureModePrompts(shot);
+        shot.mode = button.dataset.mode;
+        shot.prompt = shot.prompts[shot.mode] || "";
+        root.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item.dataset.mode === shot.mode));
         syncModeUI();
+        renderPromptContent(shot.prompt);
         save();
     });
     const inferProgressPhase = (title, explicit) => {
@@ -1872,7 +2965,7 @@ function createWorkbench(node) {
         const last = runtime.progressTrace.at(-1);
         if (!last || last.key !== key) {
             runtime.progressTrace.push({ key, label });
-            if (runtime.progressTrace.length > 30) runtime.progressTrace.splice(0, runtime.progressTrace.length - 30);
+            if (runtime.progressTrace.length > 160) runtime.progressTrace.splice(0, runtime.progressTrace.length - 160);
         } else if (label) last.label = label;
         runtime.progress = { ...generationProgress };
         node.properties ??= {};
@@ -1887,7 +2980,11 @@ function createWorkbench(node) {
         const label = String(graphNode?.title || type || (nodeId ? `节点 ${nodeId}` : "工作流"));
         const key = `${type} ${label}`.toLowerCase();
         let action = "执行节点";
-        if (/xiantuvideofacerepair/.test(key)) action = "人脸修复";
+        if (/xiantuvideolatentcacheload/.test(key)) action = "读取上一分镜 Latent";
+        else if (/minimaxh3finitelatentcontinuation/.test(key)) action = "安装分镜续接条件";
+        else if (/xiantuvideolatentcachesave/.test(key)) action = "保存当前分镜 Latent";
+        else if (/xiantuvideocontinuationtrim/.test(key)) action = "裁剪续接重叠帧";
+        else if (/xiantuvideofacerepair/.test(key)) action = "人脸修复";
         else if (/ksampler|sampler|采样/.test(key)) action = "采样";
         else if (/vaedecode|vae decode|解码/.test(key)) action = "VAE 解码";
         else if (/vaeencode|vae encode/.test(key)) action = "VAE 编码";
@@ -1970,6 +3067,42 @@ function createWorkbench(node) {
             traceLabel: action,
         });
     };
+    const onDirectorInternalStage = (event) => {
+        const detail = event?.detail || {};
+        const eventNode = String(detail.node ?? detail.node_id ?? "");
+        if (eventNode && eventNode !== String(node.id)) return;
+        const label = String(detail.label || "导演台内部处理");
+        const phase = String(detail.phase || "start");
+        const rawPercent = Number(detail.percent);
+        const internalPercent = Number.isFinite(rawPercent) ? Math.max(0, Math.min(100, rawPercent)) : null;
+        const currentInternalPercent = Math.max(0, Math.min(100, Number(runtime.directorStagePercent) || 0));
+        const completedInternalPercent = phase === "start" || internalPercent === null
+            ? currentInternalPercent
+            : Math.max(currentInternalPercent, internalPercent);
+        runtime.directorStagePercent = completedInternalPercent;
+        // The workbench node owns the 13%-18% execution range. Keep its
+        // nested stages inside that range so the top-level "executing" event
+        // and the first backend stage can never make the bar jump backwards.
+        const overallPercent = runtimeOverallPercent(13 + completedInternalPercent * .05);
+        const elapsed = Math.max(0, Number(detail.elapsed_ms || 0));
+        const elapsedText = elapsed ? `耗时 ${(elapsed / 1000).toFixed(elapsed >= 10000 ? 1 : 2)} 秒` : "";
+        const suppliedDetail = String(detail.detail || "");
+        const actionDetail = phase === "complete"
+            ? [suppliedDetail, elapsedText].filter(Boolean).join(" · ")
+            : suppliedDetail;
+        runtime.externalBusy = true;
+        setGenerationProgress({
+            title: phase === "complete" ? `${label}完成` : phase === "error" ? `${label}失败` : label,
+            actionDetail,
+            batchDetail: runtimeBatchDetail(),
+            percent: overallPercent,
+            phase: phase === "error" ? "prepare" : /读取|解码|VAE|Qwen|条件|Latent/.test(label) ? "load" : "prepare",
+            phasePercent: completedInternalPercent,
+            traceKey: `director:${String(detail.stage || label)}:${phase}`,
+            traceLabel: phase === "complete" ? `${label}完成` : label,
+        });
+    };
+    api.addEventListener?.("xiantu_video_editor_stage", onDirectorInternalStage);
     const globalExecutionHandlers = {
         execution_start: () => { if (!runtime.busy) { runtime.externalBusy = true; startGenerationClock(); setGenerationProgress({ title: "准备执行工作流", actionDetail: "", batchDetail: "分镜 1/1", percent: 0, phase: "prepare", phasePercent: 0 }); } },
         executing: (event) => {
@@ -2412,7 +3545,18 @@ function createWorkbench(node) {
         }
         return null;
     };
-    const injectContinuationPipeline = (prompt, shot) => {
+    const continuityCacheKey = (shot) => `visible-tail-v2:${continuityCacheNamespace}:${String(shot?.id || "")}`;
+    const latentCacheStatus = async (shot) => {
+        if (!shot?.id) return null;
+        try {
+            const response = await api.fetchApi(`/xiantu/video-editor/latent-cache-status?key=${encodeURIComponent(continuityCacheKey(shot))}`);
+            if (!response.ok) return null;
+            return Boolean((await response.json())?.exists);
+        } catch {
+            return null;
+        }
+    };
+    const injectContinuationPipeline = (prompt, shot, previousShot, useLatentContinuation = true) => {
         const nodes = prompt?.output;
         if (!nodes || typeof nodes !== "object") throw new Error("无法读取当前工作流，不能安装视频时长规范链路");
         const workbench = Object.entries(nodes).find(([, value]) => String(value?.class_type || "") === NODE);
@@ -2429,10 +3573,101 @@ function createWorkbench(node) {
             return Object.values(inputs).some((value) => Array.isArray(value) && value.length === 2 && dependsOn(value[0], targetId, seen));
         };
 
-        const usesContextContinuation = Boolean(shot?.inheritPrevious) && shot?.mode !== "frames";
-        // The workbench now writes the previous shot into native H3 interior
-        // keyframes. Both the stock sampler and SelfLift consume that same
-        // conditioning, so no sampler-specific adapter node is injected here.
+        const usesLatentContinuation = Boolean(shot?.inheritPrevious) && Boolean(useLatentContinuation);
+        const currentCacheKey = continuityCacheKey(shot);
+        const visibleEndFrames = (Boolean(shot?.inheritPrevious) ? Number(shot.contextTrimFrames || 0) : 0)
+            + targetOutputFrames(shot.seconds);
+        let continuationCount = 0;
+        let cacheSaveCount = 0;
+        let previousCacheId = null;
+        if (usesLatentContinuation) {
+            if (!previousShot) throw new Error("承接已开启，但没有找到上一分镜");
+            previousCacheId = allocateId();
+            nodes[previousCacheId] = {
+                class_type: "XiantuVideoLatentCacheLoad",
+                inputs: { cache_key: continuityCacheKey(previousShot) },
+            };
+        }
+
+        // Queueing remains one storyboard shot per ComfyUI prompt. Each
+        // supported H3 sampler receives the preceding sampled AV latent through
+        // Timeline Director's Drift-Control continuation node, then writes its
+        // new sampled latent for the following independent prompt.
+        for (const [samplerId, sampler] of Object.entries({ ...nodes })) {
+            const samplerType = String(sampler?.class_type || "");
+            if (!dependsOn(samplerId, workbenchId)) continue;
+            sampler.inputs ||= {};
+            let installed = false;
+
+            if (/SelfLift.*H3.*Sampler|MiniMaxH3TimelineSelfLiftSampler/i.test(samplerType)) {
+                const { model, positive, latent_image: targetLatent, sigmas } = sampler.inputs;
+                if (![model, positive, targetLatent, sigmas].every(Array.isArray)) continue;
+                if (usesLatentContinuation) {
+                    const continuationId = allocateId();
+                    nodes[continuationId] = {
+                        class_type: "MiniMaxH3FiniteLatentContinuation",
+                        inputs: {
+                            positive,
+                            target_latent: targetLatent,
+                            iteration: 1,
+                            overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
+                            continue_audio_latent: true,
+                            model,
+                            sigmas,
+                            previous_latent: [previousCacheId, 0],
+                        },
+                    };
+                    sampler.inputs.positive = [continuationId, 0];
+                    sampler.inputs.latent_image = [continuationId, 1];
+                    sampler.inputs.model = [continuationId, 3];
+                    continuationCount += 1;
+                }
+                installed = true;
+            } else if (samplerType === "SamplerCustomAdvanced") {
+                const guiderLink = sampler.inputs.guider;
+                const targetLatent = sampler.inputs.latent_image;
+                const sigmas = sampler.inputs.sigmas;
+                if (![guiderLink, targetLatent, sigmas].every(Array.isArray)) continue;
+                const guider = nodes[String(guiderLink[0])];
+                const positiveKey = Array.isArray(guider?.inputs?.conditioning) ? "conditioning" : Array.isArray(guider?.inputs?.positive) ? "positive" : "";
+                if (!positiveKey || !Array.isArray(guider.inputs.model)) continue;
+                if (usesLatentContinuation) {
+                    const continuationId = allocateId();
+                    nodes[continuationId] = {
+                        class_type: "MiniMaxH3FiniteLatentContinuation",
+                        inputs: {
+                            positive: guider.inputs[positiveKey],
+                            target_latent: targetLatent,
+                            iteration: 1,
+                            overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
+                            continue_audio_latent: true,
+                            model: guider.inputs.model,
+                            sigmas,
+                            previous_latent: [previousCacheId, 0],
+                        },
+                    };
+                    guider.inputs[positiveKey] = [continuationId, 0];
+                    guider.inputs.model = [continuationId, 3];
+                    sampler.inputs.latent_image = [continuationId, 1];
+                    continuationCount += 1;
+                }
+                installed = true;
+            }
+
+            if (!installed) continue;
+            const cacheSaveId = allocateId();
+            nodes[cacheSaveId] = {
+                class_type: "XiantuVideoLatentCacheSave",
+                inputs: {
+                    latent: [String(samplerId), 0],
+                    cache_key: currentCacheKey,
+                    visible_end_frames: visibleEndFrames,
+                },
+            };
+            cacheSaveCount += 1;
+        }
+        if (!cacheSaveCount) throw new Error("没有找到连接到导演台且支持AV Latent缓存的H3采样器");
+        if (usesLatentContinuation && !continuationCount) throw new Error("没有找到可接入Timeline Director Drift-Control的H3采样器");
 
         let trimCount = 0;
         const trimIds = [];
@@ -2454,7 +3689,7 @@ function createWorkbench(node) {
             // 22/39/56-frame prefix, so remove that complete prefix once.
             if (trimIds.some((trimId) => dependsOn(String(imageLink[0]), trimId))) continue;
             const trimId = allocateId();
-            const contextFrames = usesContextContinuation ? Number(shot.contextTrimFrames || continuityOverlapFrames) : 0;
+            const contextFrames = Boolean(shot?.inheritPrevious) ? Number(shot.contextTrimFrames || 0) : 0;
             const trimInputs = {
                 images: imageLink,
                 trim_frames: contextFrames > 0 ? contextFrames : 0,
@@ -2582,6 +3817,7 @@ function createWorkbench(node) {
     };
     const waitForPrompt = (promptId, onProgress) => new Promise((resolve, reject) => {
         let finished = false;
+        let executionEventReceived = false;
         let timer = null;
         const deadlineAt = Date.now() + 12 * 60 * 60 * 1000;
         const cleanup = () => {
@@ -2611,6 +3847,7 @@ function createWorkbench(node) {
             const eventPrompt = detail.prompt_id ?? detail.promptId ?? raw.prompt_id ?? raw.promptId;
             if (eventPrompt != null && String(eventPrompt) !== String(promptId)) return;
             if (eventPrompt == null && String(runtime.currentBatch?.promptId || "") !== String(promptId)) return;
+            executionEventReceived = true;
             const value = Number(detail.value || 0), max = Math.max(1, Number(detail.max || 1));
             onProgress?.({ phase: "progress", value, max, node: detail.node ?? detail.node_id ?? raw.node ?? raw.node_id ?? "" });
         };
@@ -2620,7 +3857,7 @@ function createWorkbench(node) {
             if (eventPrompt != null && String(eventPrompt) !== String(promptId)) return;
             if (eventPrompt == null && String(runtime.currentBatch?.promptId || "") !== String(promptId)) return;
             const nodeId = detail.node ?? detail.node_id;
-            if (nodeId != null) onProgress?.({ phase: "node", node: nodeId });
+            if (nodeId != null) { executionEventReceived = true; onProgress?.({ phase: "node", node: nodeId }); }
         };
         const onExecuted = (event) => {
             const detail = event?.detail || {};
@@ -2628,7 +3865,7 @@ function createWorkbench(node) {
             if (eventPrompt != null && String(eventPrompt) !== String(promptId)) return;
             if (eventPrompt == null && String(runtime.currentBatch?.promptId || "") !== String(promptId)) return;
             const nodeId = detail.node ?? detail.node_id;
-            if (nodeId != null) onProgress?.({ phase: "executed", node: nodeId });
+            if (nodeId != null) { executionEventReceived = true; onProgress?.({ phase: "executed", node: nodeId }); }
         };
         const onCached = (event) => {
             const detail = event?.detail || {};
@@ -2636,6 +3873,7 @@ function createWorkbench(node) {
             if (eventPrompt != null && String(eventPrompt) !== String(promptId)) return;
             if (eventPrompt == null && String(runtime.currentBatch?.promptId || "") !== String(promptId)) return;
             const nodes = Array.isArray(detail.nodes) ? detail.nodes : [];
+            if (nodes.length) executionEventReceived = true;
             nodes.forEach((nodeId) => onProgress?.({ phase: "cached", node: nodeId }));
         };
         api.addEventListener?.("execution_success", onSuccess);
@@ -2653,6 +3891,22 @@ function createWorkbench(node) {
                 return;
             }
             try {
+                if (!executionEventReceived) {
+                    const queueResponse = await api.fetchApi("/queue");
+                    if (queueResponse.ok) {
+                        const queue = await queueResponse.json();
+                        const entryPromptId = (entry) => String(Array.isArray(entry) ? (entry[1] ?? "") : (entry?.prompt_id ?? entry?.promptId ?? ""));
+                        const running = Array.isArray(queue?.queue_running) ? queue.queue_running : [];
+                        const pending = Array.isArray(queue?.queue_pending) ? queue.queue_pending : [];
+                        const runningIndex = running.findIndex((entry) => entryPromptId(entry) === String(promptId));
+                        const pendingIndex = pending.findIndex((entry) => entryPromptId(entry) === String(promptId));
+                        if (!executionEventReceived) {
+                            if (runningIndex >= 0) onProgress?.({ phase: "queued", queueState: "running", position: runningIndex + 1, ahead: 0 });
+                            else if (pendingIndex >= 0) onProgress?.({ phase: "queued", queueState: "pending", position: pendingIndex + 1, ahead: pendingIndex });
+                            else onProgress?.({ phase: "queued", queueState: "accepted", position: 0, ahead: 0 });
+                        }
+                    }
+                }
                 const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);
                 if (!response.ok) return;
                 const history = await response.json();
@@ -2671,6 +3925,7 @@ function createWorkbench(node) {
         showDirectorError();
         if (runtime.busy) return;
         updatePrompt();
+        applyShotFunctionSelections(activeShot());
         const originalShotId = activeShotId;
         const selected = shots.filter((shot) => shot.selected);
         const jobs = selected.length ? selected : [activeShot()];
@@ -2678,6 +3933,7 @@ function createWorkbench(node) {
         runtime.busy = true;
         runtime.cancelRequested = false;
         runtime.progressTrace = [];
+        runtime.directorStagePercent = 0;
         runtime.currentBatch = { index: 0, total: jobs.length, promptId: "" };
         startGenerationClock();
         runtime.buttonText = "■ 停止生成";
@@ -2690,12 +3946,14 @@ function createWorkbench(node) {
                 if (runtime.cancelRequested) throw new Error("用户停止生成");
                 const shot = jobs[index];
                 runtime.currentBatch = { index, total: jobs.length, promptId: "" };
+                runtime.directorStagePercent = 0;
                 // The top-right timer is for the current storyboard item, not
                 // the whole batch. Reset as soon as control moves to a new item.
                 startGenerationClock();
                 const preparationSteps = 18;
                 await reportPreparationStep(1, preparationSteps, "读取分镜任务", shot.title || `分镜 ${index + 1}`);
                 activeShotId = shot.id;
+                applyShotFunctionSelections(shot);
                 await reportPreparationStep(2, preparationSteps, "切换当前分镜", shot.title || `分镜 ${index + 1}`);
                 const position = shots.findIndex((item) => item.id === shot.id);
                 const previous = position > 0 ? shots[position - 1] : null;
@@ -2704,14 +3962,22 @@ function createWorkbench(node) {
                 await reportPreparationStep(4, preparationSteps, "读取生成参数", `${generationResolution.width}×${generationResolution.height} · ${resolutionState.fps} FPS · ${shot.seconds} 秒`);
                 await reportPreparationStep(5, preparationSteps, "读取提示词", `${String(shot.prompt || "").length} 个字符`);
                 await reportPreparationStep(6, preparationSteps, "校验承接关系", shot.inheritPrevious ? "检查上一分镜输出" : "本分镜不承接");
-                const previousOutput = shot.inheritPrevious ? await recoverPreviousShotOutput(previous) : null;
-                if (shot.inheritPrevious && !previousOutput?.filename) {
-                    throw new Error(`${shot.title || `分镜 ${position + 1}`} 要承接上一分镜，但上一分镜还没有已保存的成功输出`);
-                }
-                const usesContextContinuation = Boolean(shot.inheritPrevious) && shot.mode !== "frames";
+                const previousCacheStatus = await latentCacheStatus(previous || shot);
+                const backendSupportsIsolatedState = previousCacheStatus !== null;
+                const useLatentContinuation = Boolean(shot.inheritPrevious) && previousCacheStatus !== false;
+                const usesContextContinuation = Boolean(shot.inheritPrevious) && (shot.mode !== "frames" || useLatentContinuation);
                 shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
                 await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取上一分镜末尾 ${shot.contextTrimFrames} 帧作为 H3 原生上下文` : "取上一分镜最后一帧作为首帧") : "不使用承接");
                 const generationAssets = effectiveAssetsForShot(shot);
+                const previousOutput = shot.inheritPrevious ? await recoverPreviousShotOutput(previous) : null;
+                const needsPreviousVideo = Boolean(shot.inheritPrevious) && (
+                    !useLatentContinuation
+                    || shot.mode === "frames"
+                    || (shot.mode === "image" && !generationAssets.some((asset) => String(asset.type || "").startsWith("image/")))
+                );
+                if (needsPreviousVideo && !previousOutput?.filename) {
+                    throw new Error(`${shot.title || `分镜 ${position + 1}`} 要承接上一分镜，但上一分镜还没有已保存的成功输出`);
+                }
                 await reportPreparationStep(8, preparationSteps, "读取参考素材列表", `共 ${generationAssets.length} 个素材`);
                 for (let assetIndex = 0; assetIndex < generationAssets.length; assetIndex += 1) {
                     const asset = generationAssets[assetIndex];
@@ -2729,11 +3995,61 @@ function createWorkbench(node) {
                 const shotSeed = refreshWorkflowSeed();
                 shot.lastSeed = shotSeed;
                 await reportPreparationStep(12, preparationSteps, "读取工作流节点", `收集节点与连接 · 随机种子 ${shotSeed}`);
-                const graphPrompt = await app.graphToPrompt();
+                const fullEditorState = buildEditorState();
+                const executionRecord = (record) => record ? {
+                    filename: String(record.filename || record.name || ""),
+                    name: String(record.name || record.filename || ""),
+                    subfolder: String(record.subfolder || ""),
+                    type: String(record.type || record.sourceType || "output"),
+                    sourceType: String(record.sourceType || record.type || "output"),
+                } : null;
+                const executionShot = {
+                    id: String(shot.id),
+                    title: String(shot.title || `分镜 ${position + 1}`),
+                    prompt: String(shot.prompt || ""),
+                    mode: String(shot.mode || "reference"),
+                    seconds: Number(shot.seconds || 5),
+                    inheritPrevious: Boolean(shot.inheritPrevious),
+                    referenceSize: shot.referenceSize === "max" ? "max" : "match",
+                    sequenceNumber: position + 1,
+                    previousOutput: needsPreviousVideo ? executionRecord(previousOutput) : null,
+                };
+                // Only values consumed by video_editor.py belong in the node's
+                // cache key. Timeline editing, progress, results, selection,
+                // cleanup UI and random sampler seeds must not invalidate H3
+                // conditioning when the actual shot inputs are unchanged.
+                const executionState = {
+                    version: 3,
+                    activeShotId: executionShot.id,
+                    filenamePrefix: String(filenamePrefix || ""),
+                    resolution: { width: Number(generationResolution.width), height: Number(generationResolution.height) },
+                    continuityMode: useLatentContinuation ? "latent" : "video",
+                    continuityOverlapFrames: Number(continuityOverlapFrames),
+                    shots: [executionShot],
+                    assets: generationAssets.map((asset) => ({
+                        id: String(asset.id || ""),
+                        shotId: String(asset.shotId || ""),
+                        global: Boolean(asset.global),
+                        name: String(asset.name || asset.serverName || ""),
+                        serverName: String(asset.serverName || asset.name || ""),
+                        subfolder: String(asset.subfolder || ""),
+                        type: String(asset.type || ""),
+                        sourceType: String(asset.sourceType || "input"),
+                        contentHash: String(asset.sourceContentHash || asset.contentHash || ""),
+                    })),
+                };
+                const fullSerializedState = JSON.stringify(fullEditorState);
+                let graphPrompt;
+                try {
+                    if (editorStateWidget) editorStateWidget.value = backendSupportsIsolatedState ? JSON.stringify(executionState) : fullSerializedState;
+                    graphPrompt = await app.graphToPrompt();
+                } finally {
+                    if (editorStateWidget) editorStateWidget.value = fullSerializedState;
+                }
                 injectWorkflowSeed(graphPrompt, shotSeed);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
                 await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧 H3 原生上下文承接` : "最后一帧首帧承接") : "无需承接，保持原工作流");
-                const continuityPrompt = injectContinuationPipeline(graphPrompt, shot);
+                const continuityPrompt = injectContinuationPipeline(graphPrompt, shot, previous, useLatentContinuation);
                 await reportPreparationStep(15, preparationSteps, "安装人脸修复链路", faceRepairSettings.enabled ? "远景人脸修复已接入" : "人脸修复未开启");
                 const prompt = injectEncoderCompatibility(injectPostProcessingPipeline(continuityPrompt), generationResolution);
                 await reportPreparationStep(16, preparationSteps, "写入后处理参数", faceRepairSettings.enabled ? "人脸检测、修复和输出参数" : "保持原始生成结果");
@@ -2755,9 +4071,15 @@ function createWorkbench(node) {
                 shot.status = "running";
                 shot.lastPromptId = String(response.prompt_id);
                 save();
-                let executionStarted = false;
-                const historyPromise = waitForPrompt(response.prompt_id, ({ phase, value = 0, max = 1, node = "" }) => {
-                    executionStarted = true;
+                const historyPromise = waitForPrompt(response.prompt_id, ({ phase, value = 0, max = 1, node = "", queueState = "", position = 0, ahead = 0 }) => {
+                    if (phase === "queued") {
+                        const queuedTitle = queueState === "pending" ? "工作流排队中" : queueState === "running" ? "ComfyUI 正在启动工作流" : "工作流已提交";
+                        const queuedDetail = queueState === "pending"
+                            ? (ahead > 0 ? `队列第 ${position} 位 · 前面 ${ahead} 个任务` : "即将进入运行队列")
+                            : queueState === "running" ? "正在检查缓存并准备执行节点" : "正在同步调度状态";
+                        setGenerationProgress({ title: queuedTitle, actionDetail: queuedDetail, batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(8), phase: "prepare", phasePercent: null, traceKey: `internal:${index}:queue:${queueState}`, traceLabel: queuedTitle });
+                        return;
+                    }
                     const info = executionNodeInfo(node);
                     runtime.buttonText = "■ 停止生成";
                     button.textContent = runtime.buttonText;
@@ -2768,8 +4090,6 @@ function createWorkbench(node) {
                     } else reportExecutionNode(node, phase === "progress" ? value : null, phase === "progress" ? max : null);
                 });
                 setGenerationProgress({ title: "提交工作流完成", actionDetail: "ComfyUI 已接收", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(8), phase: "prepare", phasePercent: 100, traceKey: `internal:${index}:submitted` });
-                await new Promise((resolve) => requestAnimationFrame(resolve));
-                if (!executionStarted) setGenerationProgress({ title: "等待第一个节点开始", actionDetail: "", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(8), phase: "load", phasePercent: null, traceKey: `internal:${index}:queued` });
                 const history = await historyPromise;
                 if (runtime.cancelRequested) throw new Error("用户停止生成");
                 shot.lastPromptId = String(response.prompt_id);
@@ -2848,23 +4168,71 @@ function createWorkbench(node) {
     q("[data-result-merge]").onclick = async () => {
         const mergeKind = resultView === "before" ? "before" : resultView === "after" ? "after" : "";
         if (!mergeKind) { q("[data-result-merge]").title = "请先切换到“放大前”或“放大后”列表"; return; }
-        const chosen = results.filter((result) => result.selected && resultKind(result) === mergeKind).sort((left, right) => shots.findIndex((shot) => String(shot.id) === String(left.shotId)) - shots.findIndex((shot) => String(shot.id) === String(right.shotId)));
-        if (!chosen.length) { q("[data-result-merge]").title = `请先在“${mergeKind === "before" ? "放大前" : "放大后"}”中勾选视频`; return; }
+        const resultForShot = (shotId) => [...results].reverse().find((result) => String(result.shotId) === String(shotId) && resultKind(result) === mergeKind && result.filename);
+        const videoLayout = timelineLayout();
+        if (!videoLayout.length) { q("[data-result-merge]").title = "视频时间线没有可导出的片段"; return; }
+        const missing = videoLayout.find(({ segment }) => !resultForShot(segment.shotId));
+        if (missing) { q("[data-result-merge]").title = "时间线中有分镜尚未生成当前列表对应的视频"; return; }
+        const audioLayout = audioTimelineLayout(videoLayout);
+        const { width, height } = resolutionFor();
+        const recordOf = (result) => ({ filename: result.filename, subfolder: result.subfolder || "", type: result.type || "output" });
+        const timelinePayload = {
+            width, height, fps: resolutionState.fps,
+            video: videoLayout.map(({ segment, duration, overlap }) => ({ record: recordOf(resultForShot(segment.shotId)), sourceStart: editSegmentBounds(segment).sourceStart, duration, overlap })),
+            audio: audioLayout.map(({ segment, duration, start, sourceStart }) => ({ record: recordOf(resultForShot(segment.shotId)), sourceStart, duration, timelineStart: start, muted: segment.muted, volume: segment.volume, fadeIn: segment.fadeIn, fadeOut: segment.fadeOut })),
+        };
         const button = q("[data-result-merge]");
-        button.disabled = true; button.textContent = "合并中";
+        button.disabled = true; button.textContent = "剪辑导出中";
         try {
-            const response = await api.fetchApi("/xiantu/video-editor/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videos: chosen.map(({ filename, subfolder, type }) => ({ filename, subfolder, type })) }) });
+            const response = await api.fetchApi("/xiantu/video-editor/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timeline: timelinePayload }) });
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.error || "合并失败");
+            if (!response.ok) throw new Error(payload.error || "剪辑导出失败");
             const url = api.apiURL(`/view?${new URLSearchParams({ filename: payload.filename, subfolder: payload.subfolder || "", type: payload.type || "output" }).toString()}`);
-            const mergedDuration = chosen.reduce((sum, item) => sum + Number(item.actualDuration || item.duration || 0), 0);
-            results.push({ shotId: "", name: payload.filename.replace(/\.mp4$/i, ""), filename: payload.filename, subfolder: payload.subfolder || "", type: payload.type || "output", url, duration: mergedDuration, actualDuration: mergedDuration, resolution: chosen[0]?.resolution || "", created: new Date().toLocaleString(), selected: false, merged: true });
+            const mergedDuration = Number(payload.duration || videoLayout.reduce((maximum, item) => Math.max(maximum, item.end), 0));
+            results.push({ shotId: "", name: payload.filename.replace(/\.mp4$/i, ""), filename: payload.filename, subfolder: payload.subfolder || "", type: payload.type || "output", url, duration: mergedDuration, actualDuration: mergedDuration, resolution: `${width} × ${height}`, created: new Date().toLocaleString(), selected: false, merged: true });
             resultView = "merged";
             renderResults(); save();
         } catch (error) { button.title = String(error?.message || error); }
-        finally { button.disabled = false; button.textContent = "▦ 合并输出"; }
+        finally { button.disabled = false; button.textContent = "▦ 导出成片"; }
     };
     const setTimelineScale = (value) => { timelineScale = Math.max(20, Math.min(100, Number(value) || 38)); renderTimeline(); save(); };
+    q("[data-edit-split]").onclick = splitSelectedVideoSegment;
+    q("[data-edit-delete]").onclick = deleteSelectedEditSegment;
+    q("[data-edit-link]").onclick = () => {
+        const segment = selectedAudioEditSegment();
+        if (!segment) return;
+        const current = audioTimelineLayout().find((item) => String(item.segment.id) === String(segment.id));
+        if (segment.linked) {
+            segment.timelineStart = current?.start || 0;
+            segment.linked = false;
+        } else if (videoEditSegments.some((item) => String(item.id) === String(segment.videoSegmentId))) segment.linked = true;
+        renderTimeline(); syncEditToolbar(); save();
+    };
+    q("[data-edit-mute]").onclick = () => {
+        const segment = selectedAudioEditSegment();
+        if (!segment) return;
+        segment.muted = !segment.muted;
+        renderTimeline(); syncEditToolbar(); save();
+    };
+    q("[data-edit-volume]").oninput = (event) => {
+        const segment = selectedAudioEditSegment();
+        if (!segment) return;
+        segment.volume = Math.max(0, Math.min(2, Number(event.target.value || 100) / 100));
+        q("[data-edit-volume-value]").textContent = `${Math.round(segment.volume * 100)}%`;
+        save();
+    };
+    q("[data-edit-fade-in]").onchange = (event) => {
+        const segment = selectedAudioEditSegment();
+        if (!segment) return;
+        segment.fadeIn = Math.max(0, Math.min(editSegmentBounds(segment).duration, Number(event.target.value || 0)));
+        syncEditToolbar(); save();
+    };
+    q("[data-edit-fade-out]").onchange = (event) => {
+        const segment = selectedAudioEditSegment();
+        if (!segment) return;
+        segment.fadeOut = Math.max(0, Math.min(editSegmentBounds(segment).duration, Number(event.target.value || 0)));
+        syncEditToolbar(); save();
+    };
     q("[data-timeline-zoom]").oninput = (event) => setTimelineScale(event.target.value);
     q("[data-timeline-zoom-out]").onclick = () => setTimelineScale(timelineScale - 6);
     q("[data-timeline-zoom-in]").onclick = () => setTimelineScale(timelineScale + 6);
@@ -2882,6 +4250,7 @@ function createWorkbench(node) {
         clearInterval(hardwareTimer);
         clearInterval(generationElapsedTimer);
         runtime.listeners.delete(renderGenerationProgress);
+        api.removeEventListener?.("xiantu_video_editor_stage", onDirectorInternalStage);
         Object.entries(globalExecutionHandlers).forEach(([name, handler]) => api.removeEventListener?.(name, handler));
         assetList.forEach((asset) => URL.revokeObjectURL(asset.url));
         libraryAssets.splice(0);
@@ -2890,6 +4259,16 @@ function createWorkbench(node) {
     q("[data-close-workbench]").onclick = close;
     root.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
+        if (!placeholderDialog.hidden) {
+            closePlaceholderDialog();
+            event.stopPropagation();
+            return;
+        }
+        if (!sigmaDialog.hidden) {
+            closeSigmaDialog();
+            event.stopPropagation();
+            return;
+        }
         const openMenus = root.querySelectorAll(".xve-asset-menu,.xve-global-menu");
         if (openMenus.length || !q("[data-mention-menu]").hidden) {
             openMenus.forEach((menu) => menu.remove());
@@ -2907,7 +4286,7 @@ function createWorkbench(node) {
         }
     });
 
-    syncContinuityUI(); renderShots(); loadShot(); renderResults(); save();
+    renderSigmaGroups(); syncContinuityUI(); renderShots(); loadShot(); renderResults(); syncEditToolbar(); save();
     refreshGeneratedResults().catch((error) => console.warn("视频结果实时同步失败", error));
     hydrateLegacyAssets().catch((error) => console.warn("旧参考素材恢复失败", error));
     setTimeout(() => root.focus(), 0);
@@ -2916,8 +4295,76 @@ function createWorkbench(node) {
 
 app.registerExtension({
     name: "Xiantu.VideoEditorWorkbench",
+    async beforeRegisterNodeDef(nodeType) {
+        if (nodeType.prototype.__xiantuFunctionTagMenuInstalled) return;
+        nodeType.prototype.__xiantuFunctionTagMenuInstalled = true;
+        const previousMenu = nodeType.prototype.getExtraMenuOptions;
+        nodeType.prototype.getExtraMenuOptions = function (_, options) {
+            const result = previousMenu?.apply(this, arguments);
+            if (!Array.isArray(options) || String(this.comfyClass || this.type) === NODE) return result;
+            const current = readFunctionTag(this);
+            const applyTag = (category) => {
+                this.properties ??= {};
+                if (category === "custom") {
+                    const legacyName = current?.category === "custom" && current.note !== FUNCTION_TAG_LABELS.custom ? current.note : "";
+                    const value = window.prompt("请输入自定义功能标记名称", current?.label || legacyName || "");
+                    if (value === null) return;
+                    const label = String(value).trim().slice(0, 30);
+                    if (!label) { window.alert("自定义功能标记名称不能为空"); return; }
+                    const existingNote = current?.category === "custom" && current?.label ? current.note : "";
+                    this.properties[FUNCTION_TAG] = { category, label, note: existingNote };
+                } else {
+                    this.properties[FUNCTION_TAG] = { category, label: "", note: FUNCTION_TAG_LABELS[category] };
+                }
+                this.graph?.change?.();
+                this.graph?.setDirtyCanvas?.(true, true);
+            };
+            const clearTag = () => {
+                this.properties ??= {};
+                delete this.properties[FUNCTION_TAG];
+                this.graph?.change?.();
+                this.graph?.setDirtyCanvas?.(true, true);
+            };
+            const tagOptions = Object.entries(FUNCTION_TAG_LABELS).map(([category, label]) => ({
+                content: `${current?.category === category ? "✓ " : ""}${label}`,
+                callback: () => applyTag(category),
+            }));
+            if (current) tagOptions.push(null, { content: "取消功能标记", callback: clearTag });
+            options.unshift({
+                content: `闲兔功能标记${current ? `：${functionTagDisplayName(current)}` : ""}`,
+                has_submenu: true,
+                submenu: { options: tagOptions },
+            });
+            return result;
+        };
+        const previousDrawForeground = nodeType.prototype.onDrawForeground;
+        nodeType.prototype.onDrawForeground = function (ctx) {
+            previousDrawForeground?.apply(this, arguments);
+            const tag = readFunctionTag(this);
+            if (!tag || String(this.comfyClass || this.type) === NODE || this.flags?.collapsed) return;
+            const label = functionTagDisplayName(tag);
+            ctx.save();
+            ctx.font = "bold 12px sans-serif";
+            const width = Math.min(Math.max(70, ctx.measureText(label).width + 18), Math.max(70, Number(this.size?.[0] || 180) - 70));
+            const x = Math.max(4, Number(this.size?.[0] || 180) - width - 8);
+            const y = -25;
+            ctx.fillStyle = "#07343b";
+            ctx.strokeStyle = "#18dfe2";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(x, y, width, 19);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "#8bfff8";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x + width / 2, y + 9.5, width - 10);
+            ctx.restore();
+        };
+    },
     async nodeCreated(node) {
-        if (String(node.comfyClass || node.type) !== NODE) return;
+        const nodeClass = String(node.comfyClass || node.type);
+        if (nodeClass !== NODE) return;
         node.title = "闲兔 漫剧/短剧工作导演台";
         const hideInternalWidget = (widget) => {
             if (!widget) return;
@@ -2961,6 +4408,7 @@ app.registerExtension({
             node._xveWorkbench = createWorkbench(node);
             document.body.appendChild(node._xveWorkbench);
         };
+        node.__xveOpen = open;
         node.addWidget("button", "打开视频编辑工作台", null, open, { serialize: false });
         requestAnimationFrame(() => {
             const computed = node.computeSize?.() || [300, 150];
