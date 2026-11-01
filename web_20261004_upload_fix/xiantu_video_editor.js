@@ -1014,7 +1014,14 @@ function createWorkbench(node) {
             menu.appendChild(empty);
         }
     };
-    const updatePrompt = () => {
+    let promptCommitTimer = 0;
+    const commitPromptChanges = () => {
+        promptCommitTimer = 0;
+        renderResolutionSettings();
+        renderTimeline();
+        save();
+    };
+    const updatePrompt = (deferCommit = false) => {
         const shot = activeShot();
         if (!shot) return;
         const nextPrompt = promptText();
@@ -1022,9 +1029,13 @@ function createWorkbench(node) {
         shot.prompt = nextPrompt;
         shot.prompts[shot.mode] = nextPrompt;
         shot.seconds = Math.max(1, Number(q("[data-seconds]").value) || 5);
-        renderResolutionSettings();
-        renderTimeline();
-        save();
+        if (deferCommit) {
+            window.clearTimeout(promptCommitTimer);
+            promptCommitTimer = window.setTimeout(commitPromptChanges, 160);
+            return;
+        }
+        window.clearTimeout(promptCommitTimer);
+        commitPromptChanges();
     };
     const loadShot = () => {
         const shot = activeShot();
@@ -2821,7 +2832,7 @@ function createWorkbench(node) {
         }
         const raw = promptText(promptEditor);
         renderPromptContent(raw);
-        updatePrompt();
+        updatePrompt(true);
         const endRange = document.createRange();
         endRange.selectNodeContents(promptEditor);
         endRange.collapse(false);
@@ -2830,7 +2841,7 @@ function createWorkbench(node) {
         refreshMentionMenu();
     };
     promptEditor.oninput = () => {
-        updatePrompt();
+        updatePrompt(true);
         refreshMentionMenu();
     };
     promptEditor.oncompositionend = refreshMentionMenu;

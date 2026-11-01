@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "algorithm": "SHA256",
-  "generatedAt": "2026-11-01T16:14:00.071762+00:00",
+  "generatedAt": "2026-11-01T20:00:26.613203+00:00",
   "plugin": "XiantuQwenImage21Director",
   "activeWebDirectory": "web_20261004_upload_fix",
   "nodes": {
@@ -2336,8 +2336,8 @@
           "name": "applyTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4306,
-            4321
+            4317,
+            4332
           ],
           "sha256": "592b1fcfacd23f3eb5ad3aa775220314e2f6526eb2355cd790bcd8ea181f7db1"
         },
@@ -2346,8 +2346,8 @@
           "name": "clearTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4322,
-            4327
+            4333,
+            4338
           ],
           "sha256": "67f8e70e8a5577af598fac3004fc2f40f2506090b57825defd121af3cfae80a5"
         },
@@ -2357,9 +2357,9 @@
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
             267,
-            4294
+            4305
           ],
-          "sha256": "07877e237fb143fb6ae83da4b088df74af1c88229cad34bb33c3f5f1bd950ba0"
+          "sha256": "6e734822c82cf62c49b7280e28782b2de08085b2c008b9df3aa5c4331e80d93c"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv": {
           "kind": "frontend-function",
@@ -2406,8 +2406,8 @@
           "name": "hideInternalWidget",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4369,
-            4379
+            4380,
+            4390
           ],
           "sha256": "560a7bfd1b8e4a2042721df1ef79a2350884e34be5523f041cc91e5e7367c911"
         },
@@ -2436,8 +2436,8 @@
           "name": "open",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4404,
-            4410
+            4415,
+            4421
           ],
           "sha256": "9ef254402f494b0fbf6b84035bf65c43e4e235dbdaaab69088eb4e89c721b905"
         },
@@ -2492,7 +2492,7 @@
           "sha256": "eebb422446339b93c081be9f6c6fe66e328262046d4d023d304495f3fa7a6201"
         }
       },
-      "fingerprint": "32e27b80b7d9d3d90b7c4f26297e68e41e6f084b54def50ce371fb7913e7c532"
+      "fingerprint": "bdbf36e6feeefb2adf9f8bdb0c288c99ca10a965db0d437b9dab8c986ed97ca8"
     },
     "XiantuVideoFaceRepair": {
       "displayName": "闲兔｜远景人脸修复",
@@ -2640,8 +2640,8 @@
       "size": 146
     },
     "CHANGELOG.md": {
-      "sha256": "154cf4e1aa74040e68209065095983a415850f4ef8cbcc4bbbc9bb8d32922858",
-      "size": 23367
+      "sha256": "1ef261c31c79ed8b17469d4427c3b7a803d21825c177a84af69f85db8b91ebf3",
+      "size": 23675
     },
     "LICENSE": {
       "sha256": "e6df8f0619987e25790f0721114e025679ffe8a9d6b3253eb053dc89d854192b",
@@ -2716,7 +2716,7 @@
       "size": 10221
     },
     "plugin_manifest.json": {
-      "sha256": "b7dd51478b3c0fd6ff02f59a3dc252c950a0748ac4373679a9012ddcaba0163f",
+      "sha256": "672b56b63bec2fe54daef02b98404c78afb69988dae06ad2ccd41bd8fb39ddc8",
       "size": 413
     },
     "pose.py": {
@@ -2724,7 +2724,7 @@
       "size": 6409
     },
     "pyproject.toml": {
-      "sha256": "988237db26c6cd262989aa9cdc9632328251d389719f1c996a0c6ce4dff06041",
+      "sha256": "011678d2c7c2053bccd56796cb542b1edfb6074ba1e4abb15ac8f65f3d1a0a4b",
       "size": 785
     },
     "requirements.txt": {
@@ -2848,8 +2848,8 @@
       "size": 114651
     },
     "web_20261004_upload_fix/xiantu_video_editor.js": {
-      "sha256": "b86de29919b0ef12afb3f668edb21db0b1ae92046634a2f9f58a00ee78537078",
-      "size": 296736
+      "sha256": "113f7229794794729ce2bc604d9f3be1c9d7850eba27296b0123289e179ccba3",
+      "size": 297131
     }
   }
 }
