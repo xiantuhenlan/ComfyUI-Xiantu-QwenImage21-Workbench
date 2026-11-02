@@ -198,7 +198,7 @@ class _DigitalHumanState:
     @staticmethod
     def dimensions(resolution):
         ratio_w, ratio_h = ASPECT_RATIOS[resolution["aspect_ratio"]]
-        pixels = float(resolution["megapixels"]) * 1_000_000
+        pixels = float(resolution["megapixels"]) * 1024 * 1024
         multiple = int(resolution["multiple"])
         if multiple not in {8, 16, 32, 64}:
             multiple = 32

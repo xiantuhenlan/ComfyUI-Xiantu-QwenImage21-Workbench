@@ -2,6 +2,209 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 const NODE = "XiantuVideoEditorWorkbench";
+const compactDirectorState = (state) => ({
+    ...state,
+    shots: Array.isArray(state.shots) ? state.shots.map((shot) => {
+        const result = { ...shot };
+        if (shot.prompts && typeof shot.prompts === "object") {
+            result.prompts = { ...shot.prompts };
+            const mode = String(shot.mode || "reference");
+            if (typeof shot.prompt === "string" && result.prompts[mode] === shot.prompt) {
+                delete result.prompts[mode];
+            }
+        }
+        return result;
+    }) : state.shots,
+});
+const compactDirectorNodeSnapshot = (node, data) => {
+    const index = (node.widgets || []).findIndex((widget) => widget.name === "editor_state");
+    if (index < 0 || !Array.isArray(data.widgets_values)) return;
+    const candidates = [];
+    for (const value of [data.widgets_values[index], data.properties?.xiantuVideoEditorState]) {
+        try {
+            const state = typeof value === "string" ? JSON.parse(value) : value;
+            if (state && Array.isArray(state.shots)) candidates.push(state);
+        } catch {}
+    }
+    const state = candidates.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))[0];
+    if (!state) return;
+    data.widgets_values = [...data.widgets_values];
+    data.widgets_values[index] = JSON.stringify(compactDirectorState(state));
+    data.properties = { ...(data.properties || {}) };
+    delete data.properties.xiantuVideoEditorState;
+};
+let directorRecoveryDbPromise;
+let directorRecoveryWarningShown = false;
+const openDirectorRecoveryDb = () => directorRecoveryDbPromise ||= new Promise((resolve, reject) => {
+    const request = indexedDB.open("xiantu_video_editor_recovery", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("states");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("工作台恢复存储被其他页面占用"));
+}).catch((error) => { directorRecoveryDbPromise = null; throw error; });
+const readDirectorRecovery = async (key) => {
+    try {
+        const db = await openDirectorRecoveryDb();
+        return await new Promise((resolve, reject) => {
+            const request = db.transaction("states", "readonly").objectStore("states").get(key);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    } catch { return null; }
+};
+const writeDirectorRecovery = async (key, serialized) => {
+    try {
+        const legacy = localStorage.getItem(key);
+        const db = await openDirectorRecoveryDb();
+        await new Promise((resolve, reject) => {
+            const transaction = db.transaction("states", "readwrite");
+            transaction.objectStore("states").put(serialized, key);
+            transaction.oncomplete = resolve;
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error);
+        });
+        // Remove only this obsolete recovery copy, and only AFTER the complete
+        // replacement has committed. Other workflows/drafts are never cleared.
+        if (legacy !== null && localStorage.getItem(key) === legacy) {
+            localStorage.removeItem(key);
+            return true;
+        }
+    } catch (error) {
+        if (!directorRecoveryWarningShown) {
+            console.warn("导演台浏览器恢复副本保存失败；完整数据仍保留在工作流节点中", error);
+            directorRecoveryWarningShown = true;
+        }
+    }
+    return false;
+};
+const H3_DATA_BRIDGE = "XiantuH3ContinuationDataBridge";
+const isExternalSelfLift = (type) => String(type || "") === "SelfLiftH3Sampler";
+const connectedSelfLiftNodes = (graph, workbenchId) => {
+    const all = graph?._nodes || [];
+    const byId = (id) => graph?.getNodeById?.(id) || all.find((item) => String(item.id) === String(id));
+    const getLink = (id) => graph?.links instanceof Map ? graph.links.get(id) : graph?.links?.[id];
+    const reaches = (item, seen = new Set()) => {
+        if (!item || Number(item.mode) === 2 || seen.has(String(item.id))) return false;
+        if (String(item.id) === String(workbenchId)) return true;
+        seen.add(String(item.id));
+        return (item.inputs || []).some((input) => {
+            const link = getLink(input.link);
+            return link && reaches(byId(Array.isArray(link) ? link[1] : link.origin_id), seen);
+        });
+    };
+    return all.filter((item) => isExternalSelfLift(item.comfyClass || item.type)
+        && ![2, 4].includes(Number(item.mode))
+        && (item.outputs || []).some((output) => (output.links || []).length > 0)
+        && reaches(item));
+};
+const syncSelfLiftCanvasBridges = (graph, workbenchId, enabled,
+    createBridge = () => globalThis.LiteGraph?.createNode(H3_DATA_BRIDGE)) => {
+    if (!graph) return false;
+    const owner = String(workbenchId);
+    const byId = (id) => graph.getNodeById?.(id)
+        || (graph._nodes || []).find((item) => String(item.id) === String(id));
+    const getLink = (id) => graph.links instanceof Map ? graph.links.get(id) : graph.links?.[id];
+    const source = (input) => {
+        const link = getLink(input?.link);
+        if (!link) return null;
+        return { node: byId(Array.isArray(link) ? link[1] : link.origin_id),
+            slot: Array.isArray(link) ? link[2] : link.origin_slot };
+    };
+    const isBridge = (item) => (item?.comfyClass || item?.type) === H3_DATA_BRIDGE;
+    const samplers = connectedSelfLiftNodes(graph, workbenchId);
+    const related = new Set((graph._nodes || []).filter((item) => isBridge(item)
+        && item.properties?.xiantuSelfLiftBridgeOwner === owner));
+    for (const sampler of samplers) {
+        for (const input of sampler.inputs || []) {
+            const upstream = source(input)?.node;
+            if (isBridge(upstream) && (!upstream.properties?.xiantuSelfLiftBridgeOwner
+                || upstream.properties.xiantuSelfLiftBridgeOwner === owner)) related.add(upstream);
+        }
+    }
+    let changed = false;
+    let begun = false;
+    const begin = () => {
+        if (!begun) { graph.beforeChange?.(); begun = true; }
+    };
+    const connect = (from, target, slot) => {
+        const result = from.node.connect(from.slot, target, slot);
+        const actual = source(target.inputs[slot]);
+        if (result === false || !actual || actual.node !== from.node || actual.slot !== from.slot) {
+            throw new Error("数据兼容桥连线失败，已恢复原连线");
+        }
+    };
+    const remove = (bridge) => {
+        const routes = [];
+        for (let index = 0; index < (bridge.outputs || []).length; index += 1) {
+            const from = source(bridge.inputs[index]);
+            for (const linkId of [...(bridge.outputs[index].links || [])]) {
+                const link = getLink(linkId);
+                if (!link) continue;
+                const target = byId(Array.isArray(link) ? link[3] : link.target_id);
+                const slot = Array.isArray(link) ? link[4] : link.target_slot;
+                if (!from?.node || !target) throw new Error("数据兼容桥原连线缺失，请检查画布连接");
+                routes.push({ from, target, slot, index });
+            }
+        }
+        begin();
+        try {
+            for (const route of routes) connect(route.from, route.target, route.slot);
+        } catch (error) {
+            for (const route of routes) bridge.connect(route.index, route.target, route.slot);
+            throw error;
+        }
+        graph.remove(bridge);
+        changed = true;
+    };
+    try {
+        for (const bridge of related) {
+            const used = samplers.some((sampler) => (sampler.inputs || [])
+                .some((input) => source(input)?.node === bridge));
+            if (!enabled || !used) remove(bridge);
+        }
+        if (enabled) for (const sampler of samplers) {
+            const latent = source(sampler.inputs?.find((input) => input.name === "latent_image"));
+            if (isBridge(latent?.node)) {
+                const bridge = latent.node;
+                if (!bridge.properties?.xiantuSelfLiftBridgeOwner) {
+                    begin();
+                    bridge.properties ||= {};
+                    bridge.properties.xiantuSelfLiftBridgeOwner = owner;
+                    changed = true;
+                }
+                continue;
+            }
+            const names = ["model", "positive", "latent_image", "model_hires"];
+            const routes = names.map((name, index) => {
+                const slot = (sampler.inputs || []).findIndex((input) => input.name === name);
+                return { from: source(sampler.inputs?.[slot]), slot, index };
+            });
+            if (routes.slice(0, 3).some((route) => !route.from?.node)) continue;
+            const bridge = createBridge();
+            if (!bridge) throw new Error("H3续接数据兼容桥节点未加载，请刷新页面后重试");
+            begin();
+            bridge.properties ||= {};
+            bridge.properties.xiantuSelfLiftBridgeOwner = owner;
+            bridge.properties.xiantuSelfLiftBridgeSampler = String(sampler.id);
+            bridge.pos = [sampler.pos[0] - Math.max(240, bridge.size?.[0] || 0) - 60, sampler.pos[1]];
+            graph.add(bridge);
+            const wired = routes.filter((route) => route.from?.node);
+            try {
+                for (const route of wired) connect(route.from, bridge, route.index);
+                for (const route of wired) connect({ node: bridge, slot: route.index }, sampler, route.slot);
+            } catch (error) {
+                for (const route of wired) route.from.node.connect(route.from.slot, sampler, route.slot);
+                graph.remove(bridge);
+                throw error;
+            }
+            changed = true;
+        }
+    } finally {
+        if (begun) graph.afterChange?.();
+        if (changed) { graph.change?.(); graph.setDirtyCanvas?.(true, true); }
+    }
+    return changed;
+};
 const FUNCTION_TAG = "xiantuFunctionTag";
 const FUNCTION_TAG_LABELS = Object.freeze({ speed: "加速", optimization: "性能优化", sampling: "采样 SIGMAS", model: "模型", lora: "LoRA", custom: "自定义" });
 const readFunctionTag = (item) => {
@@ -372,6 +575,7 @@ function createWorkbench(node) {
               <div class="xve-prompt-head">
                 <label for="xve-prompt">单个分镜提示词</label>
                 <div class="xve-sheet-actions">
+                  <label class="xve-selflift-compat" data-selflift-compat-label title="当前导演台未连接启用的 SelfLift 二采节点"><input type="checkbox" data-selflift-compat disabled>二采兼容</label>
                   <button type="button" data-download-sheet>⇩ 下载表格</button>
                   <button type="button" data-upload-sheet>↥ 上传表格</button>
                   <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-file hidden>
@@ -560,9 +764,12 @@ function createWorkbench(node) {
         };
         if (widgetValue && widgetValue !== "{}") addCandidate(widgetValue);
         if (propertyValue && (typeof propertyValue === "object" || String(propertyValue).trim())) addCandidate(propertyValue);
+        if (node._xveRecoveredState) addCandidate(node._xveRecoveredState);
         try { addCandidate(localStorage.getItem(editorStateStorageKey)); } catch {}
         return candidates.sort((left, right) => Number(right?.updated_at || 0) - Number(left?.updated_at || 0))[0] || {};
     })();
+    let lastSavedUpdatedAt = Number(initialState.updated_at || 0);
+    let lastSavedContent = "";
     const savedAssetRecords = Array.isArray(initialState.assets) ? initialState.assets : [];
     const results = Array.isArray(initialState.results) ? initialState.results.map((result) => ({ ...result })) : [];
     let resultView = ["before", "after", "merged"].includes(initialState.resultView) ? initialState.resultView : "after";
@@ -685,6 +892,7 @@ function createWorkbench(node) {
     let continuityEnabled = initialState.continuityEnabled ?? initialState.continuity?.enabled ?? true;
     let continuityOverlapFrames = snapContinuityFrames(initialState.continuityOverlapFrames ?? initialState.continuity?.frames ?? 22);
     const continuityMode = "latent";
+    let selfLiftCompatibility = Boolean(initialState.selfLiftCompatibility);
     const continuityCacheNamespace = String(initialState.continuityCacheNamespace || globalThis.crypto?.randomUUID?.() || makeId());
     const cleanupSettings = {
         cache: Boolean(initialState.cleanupSettings?.cache),
@@ -714,6 +922,7 @@ function createWorkbench(node) {
     runtime.directorStagePercent = 0;
     runtime.externalBusy = false;
     let hardwareTimer = null;
+    let selfLiftCompatibilityTimer = null;
     let generationElapsedTimer = null;
     let previewResult = null;
     let selectedAssetIds = new Set();
@@ -892,6 +1101,7 @@ function createWorkbench(node) {
             continuityEnabled,
             continuityOverlapFrames,
             continuityMode,
+            selfLiftCompatibility,
             continuityCacheNamespace,
             cleanupSettings: { ...cleanupSettings },
             faceRepair: structuredClone(faceRepairSettings),
@@ -904,20 +1114,33 @@ function createWorkbench(node) {
             selectedAssetIds: [...selectedAssetIds],
             results,
             resultView,
-            updated_at: Date.now(),
+            updated_at: lastSavedUpdatedAt,
         });
     const save = () => {
-        const nextState = buildEditorState();
+        const nextState = compactDirectorState(buildEditorState());
+        const content = JSON.stringify({ ...nextState, updated_at: 0 });
+        const changed = content !== lastSavedContent;
+        if (changed) {
+            lastSavedUpdatedAt = Date.now();
+            lastSavedContent = content;
+        }
+        nextState.updated_at = lastSavedUpdatedAt;
         const serialized = JSON.stringify(nextState);
-        const changed = String(editorStateWidget?.value || "") !== serialized;
+        const widgetChanged = String(editorStateWidget?.value || "") !== serialized;
         if (editorStateWidget) editorStateWidget.value = serialized;
         node.properties ??= {};
-        node.properties.xiantuVideoEditorState = structuredClone(nextState);
-        try { localStorage.setItem(filenamePrefixStorageKey, filenamePrefix); } catch {}
-        try { localStorage.setItem(editorStateStorageKey, serialized); } catch {}
-        if (changed) node.graph?.change?.();
-        node.graph?.setDirtyCanvas?.(true, true);
-        node.setDirtyCanvas?.(true, true);
+        const hadDuplicate = Boolean(node.properties.xiantuVideoEditorState);
+        if (editorStateWidget) delete node.properties.xiantuVideoEditorState;
+        else node.properties.xiantuVideoEditorState = nextState;
+        if (changed || widgetChanged || hadDuplicate) {
+            try { localStorage.setItem(filenamePrefixStorageKey, filenamePrefix); } catch {}
+            writeDirectorRecovery(editorStateStorageKey, serialized).then((migrated) => {
+                if (migrated) node.graph?.change?.();
+            });
+            node.graph?.change?.();
+            node.graph?.setDirtyCanvas?.(true, true);
+            node.setDirtyCanvas?.(true, true);
+        }
     };
     const workflowGroups = () => {
         const groups = Array.isArray(node.graph?._groups) ? node.graph._groups : [];
@@ -3570,9 +3793,8 @@ function createWorkbench(node) {
     const injectContinuationPipeline = (prompt, shot, previousShot, useLatentContinuation = true) => {
         const nodes = prompt?.output;
         if (!nodes || typeof nodes !== "object") throw new Error("无法读取当前工作流，不能安装视频时长规范链路");
-        const workbench = Object.entries(nodes).find(([, value]) => String(value?.class_type || "") === NODE);
-        if (!workbench) throw new Error("工作流中没有找到闲兔视频导演台节点");
-        const workbenchId = String(workbench[0]);
+        const workbenchId = String(node.id);
+        if (String(nodes[workbenchId]?.class_type || "") !== NODE) throw new Error("工作流中没有找到当前闲兔视频导演台节点");
         let nextId = Math.max(0, ...Object.keys(nodes).map((key) => Number(key)).filter(Number.isFinite)) + 1;
         const allocateId = () => String(nextId++);
         const dependsOn = (nodeId, targetId, seen = new Set()) => {
@@ -3721,9 +3943,8 @@ function createWorkbench(node) {
         if (!faceRepairSettings.enabled) return prompt;
         const nodes = prompt?.output;
         if (!nodes || typeof nodes !== "object") throw new Error("无法读取当前工作流，不能安装视频修复链路");
-        const workbench = Object.entries(nodes).find(([, value]) => String(value?.class_type || "") === NODE);
-        if (!workbench) throw new Error("工作流中没有找到“闲兔｜视频编辑工作台”节点");
-        const workbenchId = String(workbench[0]);
+        const workbenchId = String(node.id);
+        if (String(nodes[workbenchId]?.class_type || "") !== NODE) throw new Error("工作流中没有找到当前闲兔视频导演台节点");
         let nextId = Math.max(0, ...Object.keys(nodes).map((key) => Number(key)).filter(Number.isFinite)) + 1;
         const allocateId = () => String(nextId++);
         const dependsOn = (nodeId, targetId, seen = new Set()) => {
@@ -3766,6 +3987,14 @@ function createWorkbench(node) {
     const injectEncoderCompatibility = (prompt, sourceResolution) => {
         const nodes = prompt?.output;
         if (!nodes || typeof nodes !== "object") return prompt;
+        const dependsOnWorkbench = (nodeId, seen = new Set()) => {
+            nodeId = String(nodeId);
+            if (nodeId === String(node.id)) return true;
+            if (seen.has(nodeId)) return false;
+            seen.add(nodeId);
+            return Object.values(nodes[nodeId]?.inputs || {}).some((value) => Array.isArray(value)
+                && value.length === 2 && dependsOnWorkbench(value[0], seen));
+        };
         let nextId = Math.max(0, ...Object.keys(nodes).map((key) => Number(key)).filter(Number.isFinite)) + 1;
         const findDlssAncestor = (nodeId, seen = new Set()) => {
             nodeId = String(nodeId);
@@ -3794,8 +4023,9 @@ function createWorkbench(node) {
         };
         const sourceWidth = Math.max(2, Number(sourceResolution?.width) || 0);
         const sourceHeight = Math.max(2, Number(sourceResolution?.height) || 0);
-        for (const target of Object.values(nodes)) {
+        for (const [targetId, target] of Object.entries(nodes)) {
             if (String(target?.class_type || "") !== "VHS_VideoCombine") continue;
+            if (!dependsOnWorkbench(targetId)) continue;
             if (String(target.inputs?.format || "") !== "video/nvenc_h264-mp4") continue;
             const imageLink = target.inputs?.images;
             if (!Array.isArray(imageLink) || imageLink.length !== 2) continue;
@@ -3826,6 +4056,30 @@ function createWorkbench(node) {
         }
         return prompt;
     };
+    const promptExecutionError = (detail = {}, fallback = "分镜执行失败") => {
+        const nodeId = String(detail?.node_id ?? detail?.node ?? "");
+        const nodeType = String(detail?.node_type || "");
+        const reason = String(detail?.exception_message || detail?.error || detail?.exception_type || fallback);
+        const location = nodeType ? `${nodeType}${nodeId ? `（节点 ${nodeId}）` : ""}` : (nodeId ? `节点 ${nodeId}` : "");
+        const error = new Error([reason, location].filter(Boolean).join(" · "));
+        error.code = String(detail?.eventType || "execution_error");
+        error.nodeId = nodeId;
+        error.nodeType = nodeType;
+        return error;
+    };
+    const promptHistoryError = (record) => {
+        const messages = Array.isArray(record?.status?.messages) ? record.status.messages : [];
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const entry = messages[index];
+            const eventType = String(Array.isArray(entry) ? entry[0] : entry?.type || "");
+            const detail = (Array.isArray(entry) ? entry[1] : entry?.detail) || {};
+            if (eventType === "execution_error") return promptExecutionError({ ...detail, eventType });
+            if (eventType === "execution_interrupted") {
+                return promptExecutionError({ ...detail, eventType, exception_message: "分镜执行被中断" });
+            }
+        }
+        return promptExecutionError({}, "分镜执行失败，请查看 ComfyUI 任务错误");
+    };
     const waitForPrompt = (promptId, onProgress) => new Promise((resolve, reject) => {
         let finished = false;
         let executionEventReceived = false;
@@ -3850,8 +4104,8 @@ function createWorkbench(node) {
             if (finished) return;
             cleanup(); resolve(history);
         };
-        const onError = (event) => { if (matches(event)) { const message = event?.detail?.exception_message || event?.detail?.error || "分镜执行失败"; cleanup(); reject(new Error(String(message))); } };
-        const onInterrupted = (event) => { if (matches(event)) { cleanup(); reject(new Error("分镜执行被中断")); } };
+        const onError = (event) => { if (matches(event)) { cleanup(); reject(promptExecutionError({ ...(event?.detail || {}), eventType: "execution_error" })); } };
+        const onInterrupted = (event) => { if (matches(event)) { cleanup(); reject(promptExecutionError({ ...(event?.detail || {}), eventType: "execution_interrupted", exception_message: "分镜执行被中断" })); } };
         const onNodeProgress = (event) => {
             const raw = event?.detail || {};
             const detail = raw.progress || raw;
@@ -3928,7 +4182,7 @@ function createWorkbench(node) {
                     if (finished) return;
                     cleanup(); resolve(settled || record);
                 }
-                else if (status === "error") { cleanup(); reject(new Error("分镜执行失败，请查看 ComfyUI 任务错误")); }
+                else if (status === "error") { cleanup(); reject(promptHistoryError(record)); }
             } catch {}
         }, 1000);
     });
@@ -3940,6 +4194,7 @@ function createWorkbench(node) {
         const originalShotId = activeShotId;
         const selected = shots.filter((shot) => shot.selected);
         const jobs = selected.length ? selected : [activeShot()];
+        const useAutomaticCompatibility = selfLiftCompatibility;
         const button = q("[data-generate]");
         runtime.busy = true;
         runtime.cancelRequested = false;
@@ -3965,6 +4220,7 @@ function createWorkbench(node) {
                 await reportPreparationStep(1, preparationSteps, "读取分镜任务", shot.title || `分镜 ${index + 1}`);
                 activeShotId = shot.id;
                 applyShotFunctionSelections(shot);
+                syncSelfLiftCanvasBridges(node.graph || app.graph, node.id, useAutomaticCompatibility);
                 await reportPreparationStep(2, preparationSteps, "切换当前分镜", shot.title || `分镜 ${index + 1}`);
                 const position = shots.findIndex((item) => item.id === shot.id);
                 const previous = position > 0 ? shots[position - 1] : null;
@@ -4256,9 +4512,40 @@ function createWorkbench(node) {
         }
         renderResults(); save();
     };
+    let compatibilitySyncError = "";
+    const refreshSelfLiftCompatibility = () => {
+        const input = q("[data-selflift-compat]");
+        const label = q("[data-selflift-compat-label]");
+        if (!runtime.busy) {
+            try {
+                syncSelfLiftCanvasBridges(node.graph || app.graph, node.id, selfLiftCompatibility);
+                compatibilitySyncError = "";
+            } catch (error) {
+                if (compatibilitySyncError !== error.message) showDirectorError(error);
+                compatibilitySyncError = error.message;
+            }
+        }
+        const count = connectedSelfLiftNodes(node.graph || app.graph, node.id).length;
+        input.disabled = count === 0 || runtime.busy;
+        input.checked = count > 0 && selfLiftCompatibility;
+        label.classList.toggle("available", count > 0);
+        label.title = count > 0
+            ? `检测到 ${count} 个当前导演台连接的 SelfLift 二采节点；勾选自动添加并连线，取消恢复原连线并移除数据兼容桥`
+            : "当前导演台未连接启用的 SelfLift 二采节点";
+    };
+    q("[data-selflift-compat]").onchange = (event) => {
+        const enabled = Boolean(event.target.checked);
+        try {
+            syncSelfLiftCanvasBridges(node.graph || app.graph, node.id, enabled);
+            selfLiftCompatibility = enabled;
+        } catch (error) { showDirectorError(error); }
+        refreshSelfLiftCompatibility();
+        save();
+    };
     const close = () => {
         video.pause();
         clearInterval(hardwareTimer);
+        clearInterval(selfLiftCompatibilityTimer);
         clearInterval(generationElapsedTimer);
         runtime.listeners.delete(renderGenerationProgress);
         api.removeEventListener?.("xiantu_video_editor_stage", onDirectorInternalStage);
@@ -4298,6 +4585,8 @@ function createWorkbench(node) {
     });
 
     renderSigmaGroups(); syncContinuityUI(); renderShots(); loadShot(); renderResults(); syncEditToolbar(); save();
+    refreshSelfLiftCompatibility();
+    selfLiftCompatibilityTimer = setInterval(refreshSelfLiftCompatibility, 1000);
     refreshGeneratedResults().catch((error) => console.warn("视频结果实时同步失败", error));
     hydrateLegacyAssets().catch((error) => console.warn("旧参考素材恢复失败", error));
     setTimeout(() => root.focus(), 0);
@@ -4376,6 +4665,12 @@ app.registerExtension({
     async nodeCreated(node) {
         const nodeClass = String(node.comfyClass || node.type);
         if (nodeClass !== NODE) return;
+        const previousSerialize = node.onSerialize;
+        node.onSerialize = function (data) {
+            const result = previousSerialize?.apply(this, arguments);
+            compactDirectorNodeSnapshot(this, data);
+            return result;
+        };
         node.title = "闲兔 漫剧/短剧工作导演台";
         const hideInternalWidget = (widget) => {
             if (!widget) return;
@@ -4415,6 +4710,11 @@ app.registerExtension({
         const open = async () => {
             if (node._xveWorkbench?.isConnected) return;
             await videoEditorStyleReady;
+            const recoveryKey = `xiantu.video-editor.state:${location.hash || location.pathname}:${node.id}`;
+            node._xveRecoveredState = await Promise.race([
+                readDirectorRecovery(recoveryKey),
+                new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+            ]);
             document.querySelector(".xve-overlay")?.remove();
             node._xveWorkbench = createWorkbench(node);
             document.body.appendChild(node._xveWorkbench);

@@ -149,7 +149,7 @@ function fileUrl(record) {
 function resolutionSize(resolution) {
     const ratios = { "9:16": [9, 16], "16:9": [16, 9], "1:1": [1, 1], "3:4": [3, 4], "4:3": [4, 3] };
     const [rw, rh] = ratios[resolution.aspect_ratio] || ratios["9:16"];
-    const pixels = Math.max(0.1, Number(resolution.megapixels || 0.6)) * 1_000_000;
+    const pixels = Math.max(0.1, Number(resolution.megapixels || 0.6)) * 1024 * 1024;
     const multiple = [8, 16, 32, 64].includes(Number(resolution.multiple)) ? Number(resolution.multiple) : 32;
     const width = Math.max(multiple, Math.round(Math.sqrt(pixels * rw / rh) / multiple) * multiple);
     const height = Math.max(multiple, Math.round(Math.sqrt(pixels * rh / rw) / multiple) * multiple);

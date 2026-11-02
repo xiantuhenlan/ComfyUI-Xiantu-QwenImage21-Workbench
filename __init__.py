@@ -31,6 +31,9 @@ from .sigmas_relay import NODE_CLASS_MAPPINGS as SIGMAS_RELAY_NODE_CLASS_MAPPING
 from .sigmas_relay import NODE_DISPLAY_NAME_MAPPINGS as SIGMAS_RELAY_NODE_DISPLAY_NAME_MAPPINGS
 from .sampler_relay import NODE_CLASS_MAPPINGS as SAMPLER_RELAY_NODE_CLASS_MAPPINGS
 from .sampler_relay import NODE_DISPLAY_NAME_MAPPINGS as SAMPLER_RELAY_NODE_DISPLAY_NAME_MAPPINGS
+from .h3_data_bridge import NODE_CLASS_MAPPINGS as H3_DATA_BRIDGE_NODE_CLASS_MAPPINGS
+from .h3_data_bridge import NODE_DISPLAY_NAME_MAPPINGS as H3_DATA_BRIDGE_NODE_DISPLAY_NAME_MAPPINGS
+from .h3_data_bridge import route_bridge_after_continuation as _route_h3_data_bridge
 from . import storyboard_ai as _storyboard_ai
 from . import local_image_import as _local_image_import
 NODE_CLASS_MAPPINGS.update(POSE_NODE_CLASS_MAPPINGS)
@@ -65,6 +68,11 @@ NODE_CLASS_MAPPINGS.update(SIGMAS_RELAY_NODE_CLASS_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(SIGMAS_RELAY_NODE_DISPLAY_NAME_MAPPINGS)
 NODE_CLASS_MAPPINGS.update(SAMPLER_RELAY_NODE_CLASS_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(SAMPLER_RELAY_NODE_DISPLAY_NAME_MAPPINGS)
+NODE_CLASS_MAPPINGS.update(H3_DATA_BRIDGE_NODE_CLASS_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS.update(H3_DATA_BRIDGE_NODE_DISPLAY_NAME_MAPPINGS)
+
+from server import PromptServer as _H3BridgePromptServer
+_H3BridgePromptServer.instance.add_on_prompt_handler(_route_h3_data_bridge)
 
 # Versioned frontend path prevents browsers from reusing an older workbench
 # extension after its port schema changes.

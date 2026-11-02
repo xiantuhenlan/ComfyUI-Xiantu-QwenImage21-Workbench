@@ -454,6 +454,8 @@
   flex-wrap:nowrap!important;
 }
 .xve-shot-toolbar>.xve-generate-tools .xve-filename-prefix{min-width:90px!important;margin-left:auto!important}
+.xve-shot-toolbar>.xve-generate-tools .xve-filename-prefix,
+.xve-shot-toolbar>.xve-generate-tools>.xve-generate.small{margin-left:0!important}
 .xve-prompt-panel{grid-template-rows:45px minmax(0,1fr)!important}
 .xve-prompt-head{
   min-width:0;
@@ -464,6 +466,10 @@
 }
 .xve-prompt-head>label{color:#dcebed;font-size:16px;font-weight:700}
 .xve-sheet-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.xve-selflift-compat{display:flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid #28525e;border-radius:4px;color:#688790;font-size:12px;white-space:nowrap;cursor:not-allowed}
+.xve-selflift-compat.available{color:#cce5e9;border-color:#417680;cursor:pointer}
+.xve-selflift-compat.available:has(input:checked){color:#00e2e9;border-color:#00dce6;background:#07343c}
+.xve-selflift-compat input{position:static!important;opacity:1!important;pointer-events:auto!important;width:14px!important;height:14px!important;margin:0!important;accent-color:#00dce6}
 .xve-sheet-actions button{
   height:34px;
   border:1px solid #28525e;
