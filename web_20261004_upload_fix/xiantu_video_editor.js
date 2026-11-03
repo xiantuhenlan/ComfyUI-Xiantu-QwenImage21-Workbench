@@ -260,19 +260,79 @@ const freshSeed = () => {
     }
     return words[0] * 0x200000 + (words[1] & 0x1fffff);
 };
-const refreshWorkflowSeed = () => {
+const workbenchGraphScope = (graph, workbenchId) => {
+    const parents = new Map(), children = new Map();
+    const getLink = (id) => graph?.links instanceof Map ? graph.links.get(id) : graph?.links?.[id];
+    for (const item of graph?._nodes || []) {
+        const id = String(item.id);
+        parents.set(id, (item.inputs || []).flatMap((input) => {
+            const link = getLink(input.link);
+            if (!link) return [];
+            const origin = String(Array.isArray(link) ? link[1] : link.origin_id);
+            if (!children.has(origin)) children.set(origin, []);
+            children.get(origin).push(id);
+            return [origin];
+        }));
+    }
+    const visit = (starts, edges) => {
+        const seen = new Set(), pending = [...starts];
+        while (pending.length) {
+            const id = String(pending.pop());
+            if (seen.has(id)) continue;
+            seen.add(id); pending.push(...(edges.get(id) || []));
+        }
+        return seen;
+    };
+    const downstream = visit([workbenchId], children);
+    return { downstream, ids: visit(downstream, parents) };
+};
+const scopeWorkbenchPrompt = (prompt, workbenchId) => {
+    const nodes = prompt?.output || {}, parents = new Map(), children = new Map();
+    for (const [id, item] of Object.entries(nodes)) {
+        parents.set(id, Object.values(item.inputs || {}).flatMap((value) => {
+            if (!Array.isArray(value) || value.length !== 2 || !nodes[String(value[0])]) return [];
+            const origin = String(value[0]);
+            if (!children.has(origin)) children.set(origin, []);
+            children.get(origin).push(id);
+            return [origin];
+        }));
+    }
+    const visit = (starts, edges) => {
+        const seen = new Set(), pending = [...starts];
+        while (pending.length) {
+            const id = String(pending.pop());
+            if (seen.has(id)) continue;
+            seen.add(id); pending.push(...(edges.get(id) || []));
+        }
+        return seen;
+    };
+    const keep = visit(visit([workbenchId], children), parents);
+    prompt.output = Object.fromEntries(Object.entries(nodes).filter(([id]) => keep.has(id)));
+    if (prompt.workflow) {
+        prompt.workflow = { ...prompt.workflow };
+        if (Array.isArray(prompt.workflow.nodes)) prompt.workflow.nodes = prompt.workflow.nodes.filter((item) => keep.has(String(item.id)));
+        if (Array.isArray(prompt.workflow.links)) prompt.workflow.links = prompt.workflow.links.filter((link) =>
+            keep.has(String(Array.isArray(link) ? link[1] : link.origin_id))
+            && keep.has(String(Array.isArray(link) ? link[3] : link.target_id)));
+    }
+    return prompt;
+};
+const refreshWorkflowSeed = (workbenchId, graph = app.graph) => {
     const seed = freshSeed();
     const seedNames = new Set(["seed", "noise_seed", "随机种子", "噪声种子"]);
-    for (const graphNode of app.graph?._nodes || []) {
+    const scope = workbenchGraphScope(graph, workbenchId).ids;
+    for (const graphNode of graph?._nodes || []) {
+        if (!scope.has(String(graphNode.id))) continue;
         for (const widget of graphNode.widgets || []) {
             if (!seedNames.has(String(widget?.name || "").toLowerCase())) continue;
             widget.value = seed;
         }
     }
-    app.graph?.setDirtyCanvas?.(true, true);
+    graph?.setDirtyCanvas?.(true, true);
     return seed;
 };
-const injectWorkflowSeed = (prompt, seed) => {
+const injectWorkflowSeed = (prompt, seed, workbenchId) => {
+    scopeWorkbenchPrompt(prompt, workbenchId);
     const seedNames = new Set(["seed", "noise_seed", "随机种子", "噪声种子"]);
     for (const promptNode of Object.values(prompt?.output || {})) {
         for (const [name, value] of Object.entries(promptNode?.inputs || {})) {
@@ -2396,6 +2456,9 @@ function createWorkbench(node) {
             current.url = api.apiURL(`/view?${new URLSearchParams({ filename: current.filename, subfolder: current.subfolder || "", type: current.type || "output" }).toString()}`);
             const shot = shots.find((item) => String(item.id) === String(current.shotId));
             if (shot?.lastOutput?.filename === oldFilename) shot.lastOutput = { ...shot.lastOutput, filename: current.filename, subfolder: current.subfolder, type: current.type };
+            if (shot?.successfulOutput?.filename === oldFilename && String(shot.successfulOutput.subfolder || "") === String(payload.subfolder || current.subfolder || "")) {
+                shot.successfulOutput = { ...shot.successfulOutput, filename: current.filename, subfolder: current.subfolder, type: current.type };
+            }
             renderResults(); save();
         });
         root.querySelectorAll("[data-result-merge-one]").forEach((button) => button.onclick = () => {
@@ -2494,8 +2557,11 @@ function createWorkbench(node) {
     const placeholderDialog = q("[data-placeholder-dialog]");
     const closePlaceholderDialog = () => { placeholderDialog.hidden = true; };
     let activeFunctionTagFilter = "speed";
-    const functionTaggedNodes = (category) => (node.graph?._nodes || app.graph?._nodes || [])
-        .filter((item) => item !== node && readFunctionTag(item)?.category === category);
+    const functionTaggedNodes = (category) => {
+        const graph = node.graph || app.graph, scope = workbenchGraphScope(graph, node.id).ids;
+        return (graph?._nodes || []).filter((item) => item !== node && scope.has(String(item.id))
+            && readFunctionTag(item)?.category === category);
+    };
     const commitNodeMode = (item, mode) => {
         if (Number(item.mode || 0) === mode) return;
         item.mode = mode;
@@ -2647,7 +2713,9 @@ function createWorkbench(node) {
     };
     const samplerChoiceNodes = () => {
         const graph = node.graph || app.graph;
+        const scope = workbenchGraphScope(graph, node.id).ids;
         const all = (graph?._nodes || []).filter((item) => item !== node
+            && scope.has(String(item.id))
             && samplerNameOf(item)
             && (item.outputs || []).some((output) => String(output?.type || "").toUpperCase() === "SAMPLER"));
         const graphLink = (linkId) => graph?.links instanceof Map ? graph.links.get(linkId) : graph?.links?.[linkId];
@@ -3474,6 +3542,14 @@ function createWorkbench(node) {
             console.warn("视频导演台分镜间资源卸载请求失败（继续后续分镜）", error);
         }
     };
+    const historyNodeBelongsToWorkbench = (nodes, id, seen = new Set()) => {
+        id = String(id);
+        if (id === String(node.id)) return true;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return Object.values(nodes[id]?.inputs || {}).some((value) => Array.isArray(value)
+            && value.length === 2 && historyNodeBelongsToWorkbench(nodes, value[0], seen));
+    };
     const outputVideosFromHistory = (history) => {
         const candidates = [];
         const visit = (value) => {
@@ -3497,7 +3573,12 @@ function createWorkbench(node) {
             }
             Object.values(value).forEach(visit);
         };
-        visit(history?.outputs || history);
+        const promptNodes = history?.prompt?.[2];
+        if (promptNodes?.[String(node.id)] && history.outputs) {
+            for (const [id, output] of Object.entries(history.outputs)) {
+                if (historyNodeBelongsToWorkbench(promptNodes, id)) visit(output);
+            }
+        } else visit(history?.outputs || history);
         const unique = new Map();
         candidates.forEach((item) => unique.set(`${item.type}/${item.subfolder}/${item.filename}`, item));
         return [...unique.values()];
@@ -3505,9 +3586,10 @@ function createWorkbench(node) {
     const expectedVideoOutputCount = (history) => {
         const promptNodes = history?.prompt?.[2];
         if (!promptNodes || typeof promptNodes !== "object") return 0;
-        return Object.values(promptNodes).filter((node) => (
-            /(?:CreateVideo|VHS_VideoCombine|SaveVideo|VideoCombine)/i.test(String(node?.class_type || ""))
-            && node?.inputs?.save_output !== false
+        return Object.entries(promptNodes).filter(([id, item]) => (
+            /(?:CreateVideo|VHS_VideoCombine|SaveVideo|VideoCombine)/i.test(String(item?.class_type || ""))
+            && item?.inputs?.save_output !== false
+            && (!promptNodes[String(node.id)] || historyNodeBelongsToWorkbench(promptNodes, id))
         )).length;
     };
     const fetchSettledPromptHistory = async (promptId, fallback = null, attempts = 16) => {
@@ -3583,6 +3665,9 @@ function createWorkbench(node) {
         const shot = shots.find((item) => String(item.id) === String(result.shotId));
         if (sameOutputLocation(shot?.lastOutput, previous)) {
             shot.lastOutput = { ...shot.lastOutput, filename: result.filename, subfolder: result.subfolder, type: result.type };
+        }
+        if (sameOutputLocation(shot?.successfulOutput, previous)) {
+            shot.successfulOutput = { ...shot.successfulOutput, filename: result.filename, subfolder: result.subfolder, type: result.type };
         }
         repairFinalizedVideoElements(previous.filename, result.filename);
         return true;
@@ -3698,6 +3783,9 @@ function createWorkbench(node) {
                 result.url = api.apiURL(`/view?${new URLSearchParams({ filename: result.filename, subfolder: result.subfolder || "", type: result.type || "output" }).toString()}`);
                 const shot = shots.find((item) => String(item.id) === String(result.shotId));
                 if (shot?.lastOutput?.filename === oldFilename) shot.lastOutput = { ...shot.lastOutput, filename: result.filename, subfolder: result.subfolder, type: result.type };
+                if (shot?.successfulOutput?.filename === oldFilename && String(shot.successfulOutput.subfolder || "") === String(result.subfolder || "")) {
+                    shot.successfulOutput = { ...shot.successfulOutput, filename: result.filename, subfolder: result.subfolder, type: result.type };
+                }
             } catch (error) {
                 // A transient 404 can happen while VHS is still materializing or
                 // renaming the muxed file. Keep the stored result so a refresh or
@@ -3723,6 +3811,15 @@ function createWorkbench(node) {
     };
     const recoverPreviousShotOutput = async (shot) => {
         if (!shot) return null;
+        // A later failed attempt can already have written the stable filename.
+        // Its file must not be mistaken for the earlier committed generation.
+        if (["error", "stopped"].includes(String(shot.status || "")) && shot.successfulLatentCache?.promptId
+            && shot.lastPromptId && String(shot.lastPromptId) !== String(shot.successfulLatentCache.promptId)) return null;
+        if (shot.successfulOutput?.filename && await outputRecordExists(shot.successfulOutput)) {
+            shot.lastOutput = { ...shot.successfulOutput };
+            return shot.lastOutput;
+        }
+        if (["error", "stopped", "queued", "running"].includes(String(shot.status || ""))) return null;
         const storedResults = results.filter((item) => String(item.shotId) === String(shot.id) && item?.filename);
         const preferredStored = [
             ...storedResults.filter((item) => resultKind(item) === "after"),
@@ -3779,18 +3876,23 @@ function createWorkbench(node) {
         }
         return null;
     };
-    const continuityCacheKey = (shot) => `visible-tail-v2:${continuityCacheNamespace}:${String(shot?.id || "")}`;
+    const continuityCacheKey = (shot) => {
+        const committed = shot?.successfulLatentCache;
+        return committed?.promptId && String(committed.key || "").startsWith("visible-tail-v3:") ? String(committed.key) : "";
+    };
     const latentCacheStatus = async (shot) => {
         if (!shot?.id) return null;
+        const key = continuityCacheKey(shot);
+        if (!key) return false;
         try {
-            const response = await api.fetchApi(`/xiantu/video-editor/latent-cache-status?key=${encodeURIComponent(continuityCacheKey(shot))}`);
+            const response = await api.fetchApi(`/xiantu/video-editor/latent-cache-status?key=${encodeURIComponent(key)}`);
             if (!response.ok) return null;
             return Boolean((await response.json())?.exists);
         } catch {
             return null;
         }
     };
-    const injectContinuationPipeline = (prompt, shot, previousShot, useLatentContinuation = true) => {
+    const injectContinuationPipeline = (prompt, shot, previousShot, useLatentContinuation = true, attemptKey = `visible-tail-v3:${makeId()}`) => {
         const nodes = prompt?.output;
         if (!nodes || typeof nodes !== "object") throw new Error("无法读取当前工作流，不能安装视频时长规范链路");
         const workbenchId = String(node.id);
@@ -3807,7 +3909,7 @@ function createWorkbench(node) {
         };
 
         const usesLatentContinuation = Boolean(shot?.inheritPrevious) && Boolean(useLatentContinuation);
-        const currentCacheKey = continuityCacheKey(shot);
+        const cacheCandidates = [];
         const visibleEndFrames = (Boolean(shot?.inheritPrevious) ? Number(shot.contextTrimFrames || 0) : 0)
             + targetOutputFrames(shot.seconds);
         let continuationCount = 0;
@@ -3824,7 +3926,7 @@ function createWorkbench(node) {
 
         // Queueing remains one storyboard shot per ComfyUI prompt. Each
         // supported H3 sampler receives the preceding sampled AV latent through
-        // Timeline Director's Drift-Control continuation node, then writes its
+        // this plugin's own continuation data node, then writes its
         // new sampled latent for the following independent prompt.
         for (const [samplerId, sampler] of Object.entries({ ...nodes })) {
             const samplerType = String(sampler?.class_type || "");
@@ -3838,11 +3940,10 @@ function createWorkbench(node) {
                 if (usesLatentContinuation) {
                     const continuationId = allocateId();
                     nodes[continuationId] = {
-                        class_type: "MiniMaxH3FiniteLatentContinuation",
+                        class_type: "XiantuH3LatentContinuation",
                         inputs: {
                             positive,
                             target_latent: targetLatent,
-                            iteration: 1,
                             overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
                             continue_audio_latent: true,
                             model,
@@ -3856,6 +3957,16 @@ function createWorkbench(node) {
                     continuationCount += 1;
                 }
                 installed = true;
+                if (!usesLatentContinuation && shot.inheritPrevious) {
+                    for (const key of ["model", "model_hires"]) {
+                        if (!Array.isArray(sampler.inputs[key])) continue;
+                        const patchId = allocateId();
+                        nodes[patchId] = { class_type: "XiantuVideoContinuationModelPatch", inputs: {
+                            model: sampler.inputs[key], latent: targetLatent, sigmas, context_compat: true,
+                        } };
+                        sampler.inputs[key] = [patchId, 0];
+                    }
+                }
             } else if (samplerType === "SamplerCustomAdvanced") {
                 const guiderLink = sampler.inputs.guider;
                 const targetLatent = sampler.inputs.latent_image;
@@ -3867,11 +3978,10 @@ function createWorkbench(node) {
                 if (usesLatentContinuation) {
                     const continuationId = allocateId();
                     nodes[continuationId] = {
-                        class_type: "MiniMaxH3FiniteLatentContinuation",
+                        class_type: "XiantuH3LatentContinuation",
                         inputs: {
                             positive: guider.inputs[positiveKey],
                             target_latent: targetLatent,
-                            iteration: 1,
                             overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
                             continue_audio_latent: true,
                             model: guider.inputs.model,
@@ -3885,6 +3995,13 @@ function createWorkbench(node) {
                     continuationCount += 1;
                 }
                 installed = true;
+                if (!usesLatentContinuation && shot.inheritPrevious) {
+                    const patchId = allocateId();
+                    nodes[patchId] = { class_type: "XiantuVideoContinuationModelPatch", inputs: {
+                        model: guider.inputs.model, latent: targetLatent, sigmas, context_compat: true,
+                    } };
+                    guider.inputs.model = [patchId, 0];
+                }
             }
 
             if (!installed) continue;
@@ -3893,20 +4010,27 @@ function createWorkbench(node) {
                 class_type: "XiantuVideoLatentCacheSave",
                 inputs: {
                     latent: [String(samplerId), 0],
-                    cache_key: currentCacheKey,
+                    cache_key: `${attemptKey}:${samplerId}`,
                     visible_end_frames: visibleEndFrames,
                 },
             };
             cacheSaveCount += 1;
+            cacheCandidates.push({ samplerId: String(samplerId), key: `${attemptKey}:${samplerId}` });
         }
         if (!cacheSaveCount) throw new Error("没有找到连接到导演台且支持AV Latent缓存的H3采样器");
-        if (usesLatentContinuation && !continuationCount) throw new Error("没有找到可接入Timeline Director Drift-Control的H3采样器");
+        if (usesLatentContinuation && !continuationCount) throw new Error("没有找到连接本导演台且支持H3续接的采样器");
 
         let trimCount = 0;
         const trimIds = [];
         const saveTargets = Object.entries({ ...nodes })
             .filter(([targetId, target]) => /(?:CreateVideo|VHS_VideoCombine|SaveVideo|VideoCombine)/i.test(String(target?.class_type || "")) && dependsOn(targetId, workbenchId))
             .sort(([leftId], [rightId]) => dependsOn(rightId, leftId) ? -1 : dependsOn(leftId, rightId) ? 1 : 0);
+        const preferredTarget = saveTargets.find(([, target]) => Object.values(target.inputs || {}).some((value) =>
+            Array.isArray(value) && String(value[0]) === workbenchId && Number(value[1]) === 2)) || saveTargets[0];
+        const eligibleCaches = cacheCandidates.filter((item) => preferredTarget && dependsOn(preferredTarget[0], item.samplerId));
+        const terminalCache = eligibleCaches.find((item) => !eligibleCaches.some((other) =>
+            other !== item && dependsOn(other.samplerId, item.samplerId)));
+        if (runtime.currentBatch) runtime.currentBatch.cacheKey = terminalCache?.key || "";
         for (const [targetId, target] of saveTargets) {
             // The workbench timeline is fixed at 24 FPS. Normalize downstream
             // encoders so a stale 48 FPS setting cannot turn a 10-second,
@@ -4057,9 +4181,19 @@ function createWorkbench(node) {
         return prompt;
     };
     const promptExecutionError = (detail = {}, fallback = "分镜执行失败") => {
+        if (detail?.response && typeof detail.response === "object") {
+            const response = detail.response, top = response.error;
+            const messages = [typeof top === "string" ? top : [top?.message, top?.details].filter(Boolean).join("：")];
+            for (const [id, item] of Object.entries(response.node_errors || {})) {
+                for (const error of item.errors || []) {
+                    messages.push(`节点 ${id}${item.class_type ? ` (${item.class_type})` : ""}：${[error.message, error.details].filter(Boolean).join("：")}`);
+                }
+            }
+            return new Error(messages.filter(Boolean).join("；") || detail.message || fallback);
+        }
         const nodeId = String(detail?.node_id ?? detail?.node ?? "");
         const nodeType = String(detail?.node_type || "");
-        const reason = String(detail?.exception_message || detail?.error || detail?.exception_type || fallback);
+        const reason = String(detail?.exception_message || detail?.message || detail?.error || detail?.exception_type || fallback);
         const location = nodeType ? `${nodeType}${nodeId ? `（节点 ${nodeId}）` : ""}` : (nodeId ? `节点 ${nodeId}` : "");
         const error = new Error([reason, location].filter(Boolean).join(" · "));
         error.code = String(detail?.eventType || "execution_error");
@@ -4211,6 +4345,9 @@ function createWorkbench(node) {
             for (let index = 0; index < jobs.length; index += 1) {
                 if (runtime.cancelRequested) throw new Error("用户停止生成");
                 const shot = jobs[index];
+                if (!shot.successfulOutput && shot.status === "done" && shot.lastOutput?.filename) {
+                    shot.successfulOutput = { ...shot.lastOutput };
+                }
                 runtime.currentBatch = { index, total: jobs.length, promptId: "" };
                 runtime.directorStagePercent = 0;
                 // The top-right timer is for the current storyboard item, not
@@ -4230,8 +4367,7 @@ function createWorkbench(node) {
                 await reportPreparationStep(5, preparationSteps, "读取提示词", `${String(shot.prompt || "").length} 个字符`);
                 await reportPreparationStep(6, preparationSteps, "校验承接关系", shot.inheritPrevious ? "检查上一分镜输出" : "本分镜不承接");
                 const previousCacheStatus = await latentCacheStatus(previous || shot);
-                const backendSupportsIsolatedState = previousCacheStatus !== null;
-                const useLatentContinuation = Boolean(shot.inheritPrevious) && previousCacheStatus !== false;
+                const useLatentContinuation = Boolean(shot.inheritPrevious) && previousCacheStatus === true;
                 const usesContextContinuation = Boolean(shot.inheritPrevious) && (shot.mode !== "frames" || useLatentContinuation);
                 shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
                 await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取上一分镜末尾 ${shot.contextTrimFrames} 帧作为 H3 原生上下文` : "取上一分镜最后一帧作为首帧") : "不使用承接");
@@ -4259,7 +4395,7 @@ function createWorkbench(node) {
                 runtime.buttonText = "■ 停止生成";
                 button.textContent = runtime.buttonText;
                 await reportPreparationStep(11, preparationSteps, "保存工作台状态", "分镜、参数和参考素材");
-                const shotSeed = refreshWorkflowSeed();
+                const shotSeed = refreshWorkflowSeed(node.id, node.graph || app.graph);
                 shot.lastSeed = shotSeed;
                 await reportPreparationStep(12, preparationSteps, "读取工作流节点", `收集节点与连接 · 随机种子 ${shotSeed}`);
                 const fullEditorState = buildEditorState();
@@ -4305,15 +4441,30 @@ function createWorkbench(node) {
                         contentHash: String(asset.sourceContentHash || asset.contentHash || ""),
                     })),
                 };
+                // Old backends locate a previous video by list position. They
+                // need only its successful output record, never its prompts/assets.
+                if (needsPreviousVideo && previous && previousOutput) {
+                    executionState.shots.unshift({ id: String(previous.id), lastOutput: executionRecord(previousOutput) });
+                }
                 const fullSerializedState = JSON.stringify(fullEditorState);
                 let graphPrompt;
                 try {
-                    if (editorStateWidget) editorStateWidget.value = backendSupportsIsolatedState ? JSON.stringify(executionState) : fullSerializedState;
+                    if (editorStateWidget) editorStateWidget.value = JSON.stringify(executionState);
                     graphPrompt = await app.graphToPrompt();
                 } finally {
                     if (editorStateWidget) editorStateWidget.value = fullSerializedState;
                 }
-                injectWorkflowSeed(graphPrompt, shotSeed);
+                // Serialization hooks from an older saved node must never
+                // replace the execution payload with the complete editor state.
+                const submittedWorkbench = graphPrompt.output?.[String(node.id)];
+                if (submittedWorkbench?.inputs) submittedWorkbench.inputs.editor_state = JSON.stringify(executionState);
+                const workflowWorkbench = graphPrompt.workflow?.nodes?.find((item) => String(item.id) === String(node.id));
+                if (workflowWorkbench) {
+                    const stateIndex = (node.widgets || []).findIndex((widget) => widget.name === "editor_state");
+                    if (stateIndex >= 0 && Array.isArray(workflowWorkbench.widgets_values)) workflowWorkbench.widgets_values[stateIndex] = JSON.stringify(executionState);
+                    if (workflowWorkbench.properties) delete workflowWorkbench.properties.xiantuVideoEditorState;
+                }
+                injectWorkflowSeed(graphPrompt, shotSeed, node.id);
                 await reportPreparationStep(13, preparationSteps, "序列化工作流", `${Object.keys(graphPrompt?.output || {}).length} 个执行节点`);
                 await reportPreparationStep(14, preparationSteps, "安装承接链路", shot.inheritPrevious ? (usesContextContinuation ? `${shot.contextTrimFrames} 帧 H3 原生上下文承接` : "最后一帧首帧承接") : "无需承接，保持原工作流");
                 const continuityPrompt = injectContinuationPipeline(graphPrompt, shot, previous, useLatentContinuation);
@@ -4325,8 +4476,16 @@ function createWorkbench(node) {
                 prompt.workflow.extra.VHS_KeepIntermediate = false;
                 prompt.workflow.extra.VHS_MetadataImage = false;
                 await reportPreparationStep(17, preparationSteps, "设置输出规则", "仅保留最终视频，不保存中间文件");
-                Object.values(prompt.output || {}).forEach((promptNode) => {
-                    if (String(promptNode?.class_type || "") === "VHS_VideoCombine" && promptNode.inputs) {
+                const isCurrentOutput = (id, seen = new Set()) => {
+                    id = String(id);
+                    if (id === String(node.id)) return true;
+                    if (seen.has(id)) return false;
+                    seen.add(id);
+                    return Object.values(prompt.output?.[id]?.inputs || {}).some((value) => Array.isArray(value)
+                        && value.length === 2 && isCurrentOutput(value[0], seen));
+                };
+                Object.entries(prompt.output || {}).forEach(([id, promptNode]) => {
+                    if (String(promptNode?.class_type || "") === "VHS_VideoCombine" && promptNode.inputs && isCurrentOutput(id)) {
                         promptNode.inputs.save_metadata = false;
                         promptNode.inputs.save_output = true;
                     }
@@ -4363,6 +4522,10 @@ function createWorkbench(node) {
                 setGenerationProgress({ title: "读取生成结果", actionDetail: "解析本次任务输出", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(99), phase: "save", phasePercent: 30, traceKey: `internal:${index}:history` });
                 setGenerationProgress({ title: "整理最终文件名", actionDetail: "保留最终视频并同步预览", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(99.4), phase: "save", phasePercent: 60, traceKey: `internal:${index}:filename` });
                 const { stageOutputs } = await ingestHistoryVideos(history, shot, { showPreview: true });
+                if (!stageOutputs.size) throw new Error("当前分镜没有成功的视频输出，未更新续接缓存");
+                shot.successfulOutput = { ...shot.lastOutput };
+                shot.successfulLatentCache = runtime.currentBatch.cacheKey
+                    ? { key: runtime.currentBatch.cacheKey, promptId: String(response.prompt_id) } : null;
                 shot.completedAt = Date.now();
                 shot.generationElapsedMs = runtime.startedAt ? Math.max(0, Date.now() - runtime.startedAt) : runtime.elapsedMs;
                 shot.status = "done";
@@ -4380,7 +4543,8 @@ function createWorkbench(node) {
             setGenerationProgress({ title: "完成", actionDetail: "全部分镜", batchDetail: `分镜 ${jobs.length}/${jobs.length}`, percent: 100, phase: "done", phasePercent: 100 });
         } catch (error) {
             console.error("视频导演台顺序生成失败", error);
-            const failedShot = activeShot();
+            const failureMessage = promptExecutionError(error).message;
+            const failedShot = jobs[runtime.currentBatch?.index] || activeShot();
             const done = jobs.filter((item) => item.status === "done").length;
             if (runtime.cancelRequested) {
                 if (failedShot && failedShot.status !== "done") failedShot.status = "stopped";
@@ -4394,9 +4558,9 @@ function createWorkbench(node) {
                 if (failedShot && failedShot.status !== "done") failedShot.status = "error";
                 runtime.buttonText = "生成失败";
                 button.textContent = runtime.buttonText;
-                button.title = String(error?.message || error);
-                showDirectorError(String(error?.message || error));
-                setGenerationProgress({ title: `生成失败：${String(error?.message || error)}`, actionDetail: "", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "prepare", phasePercent: 0 });
+                button.title = failureMessage;
+                showDirectorError(failureMessage);
+                setGenerationProgress({ title: `生成失败：${failureMessage}`, actionDetail: "", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "prepare", phasePercent: 0 });
             }
         } finally {
             stopGenerationClock();

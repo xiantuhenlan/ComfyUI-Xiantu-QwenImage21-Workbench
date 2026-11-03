@@ -1,9 +1,7 @@
 """Native MiniMax H3 motion context used by the existing director workbench.
 
-This module intentionally registers no ComfyUI node and modifies no SelfLift
-source file. It installs two small runtime compatibility hooks in ComfyUI's H3
-implementation so interior keyframes can carry the previous shot through both
-the stock sampler and SelfLift high-resolution tiling.
+This module registers no node and changes no external module or class. Its
+compatibility wrapper belongs only to the cloned MODEL for the current shot.
 
 The layout and payload technique is adapted from the Apache-2.0 project
 AIMixer/ComfyUI_MiniMaxH3_Director.
@@ -13,8 +11,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-import sys
-import threading
+import copy
 
 import torch
 import torch.nn.functional as F
@@ -24,15 +21,7 @@ log = logging.getLogger("XiantuQwenImage21Director.h3_context_compat")
 
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
 CTX_FRAME_KEY = "director_context_index"
-_LAYOUT_MARKER = "_xiantu_h3_continuity_layout_patch"
-_PAYLOAD_MARKER = "_xiantu_h3_continuity_payload_patch"
-_SELFLIFT_TILE_MARKER = "_xiantu_h3_continuity_tile_patch"
-_AIMIXER_LAYOUT_MARKER = "_h3_director_continuity_layout_patch"
-_AIMIXER_PAYLOAD_MARKER = "_h3_director_continuity_payload_patch"
-
-_patch_lock = threading.Lock()
-_layout_original = None
-_payload_original = None
+_CONTEXT_WRAPPER = "xiantu_h3_scoped_context"
 
 
 def _minimax_module():
@@ -121,7 +110,8 @@ def _layout_kwargs(original, keyframes, refs, frame_count):
     return kwargs
 
 
-def _patched_layout_init(
+def _context_layout_init(
+    original,
     self,
     text_len,
     latent_t,
@@ -132,9 +122,6 @@ def _patched_layout_init(
     refs=None,
     frame_count=None,
 ):
-    original = _layout_original
-    if original is None:
-        raise RuntimeError("H3 continuation layout hook was not initialized")
     stock_keyframes = None
     if keyframes:
         stock_keyframes = []
@@ -188,121 +175,86 @@ def _patched_layout_init(
         )
 
 
-setattr(_patched_layout_init, _LAYOUT_MARKER, True)
+def _local_layout_class():
+    original = _minimax_module().PackedLayout
+
+    class ContextLayout(original):
+        def __init__(self, *args, **kwargs):
+            _context_layout_init(original.__init__, self, *args, **kwargs)
+
+    return ContextLayout
 
 
-def _patched_extra_conds(self, **kwargs):
-    original = _payload_original
-    if original is None:
-        raise RuntimeError("H3 continuation payload hook was not initialized")
-    output = original(self, **kwargs)
-    keyframes = kwargs.get("minimax_keyframes")
-    references = kwargs.get("minimax_refs")
-    if not keyframes or not references:
-        return output
-    condition = output.get("minimax_payload")
-    payload = getattr(condition, "cond", None) if condition is not None else None
+def _context_payload(payload, streams, context):
     if not isinstance(payload, dict):
-        raise RuntimeError("H3 continuation could not merge keyframes and references")
-    payload["cond_video_latents"] = [
-        item["latent"] for item in keyframes if item.get("latent") is not None
-    ] + [
-        item["latent"] for item in references if item.get("latent") is not None
-    ]
-    payload["cond_audio_latents"] = [
-        item["audio_latent"]
-        for item in list(keyframes) + list(references)
-        if item.get("audio_latent") is not None
-    ]
-    frame_count = kwargs.get("minimax_frame_count")
-    if frame_count is not None:
-        payload["frame_count"] = frame_count
+        return payload
+    keyframes, references = payload.get("keyframes") or [], payload.get("refs") or []
+    if not keyframes and not references:
+        return payload
+    output = dict(payload)
+    combined = list(keyframes) + list(references)
+    output["cond_video_latents"] = [item["latent"] for item in combined if item.get("latent") is not None]
+    output["cond_audio_latents"] = [item["audio_latent"] for item in combined if item.get("audio_latent") is not None]
+    if not any(CTX_FRAME_KEY in item for item in keyframes):
+        return output
+    video, audio = _streams(streams)
+    text_len, latent_t = int(context.shape[1]), int(video.shape[2])
+    height, width = ((int(value) + 1) // 2 * 2 for value in video.shape[-2:])
+    signature = (text_len, latent_t, height, width, int(audio.shape[-1]))
+    frame_count = int(payload.get("frame_count") or _pixel_frames_for_latent_t(latent_t))
+    layout = payload.get("layout")
+    if layout is None or layout.signature != signature:
+        layout = _local_layout_class()(*signature, keyframes=keyframes, refs=references, frame_count=frame_count)
+    else:
+        layout = copy.copy(layout)
+        layout.position_ids = layout.position_ids.clone()
+        offset = _target_origin(layout) - float(text_len)
+        spans = [(start, end) for start, end, kind in layout.segments if kind == "cond"]
+        if len(spans) != len(keyframes):
+            raise RuntimeError("H3 continuation keyframe/layout mismatch")
+        for (start, end), keyframe in zip(spans, keyframes):
+            if CTX_FRAME_KEY in keyframe:
+                layout.position_ids[start:end, 0] = _keyframe_time(
+                    _minimax_module(), text_len, latent_t, frame_count, keyframe[CTX_FRAME_KEY]
+                ) + offset
+    output["layout"] = layout
+    output["frame_count"] = frame_count
     return output
 
 
-setattr(_patched_extra_conds, _PAYLOAD_MARKER, True)
+def install_context_model(model):
+    """Repair only this MODEL's invocation, including calls made inside tiling."""
+    from comfy.patcher_extension import WrappersMP
 
+    patched = model.clone()
 
-def ensure_context_runtime():
-    """Install H3-only runtime hooks once without touching SelfLift."""
-    global _layout_original, _payload_original
-    with _patch_lock:
-        minimax = _minimax_module()
-        current_layout = minimax.PackedLayout.__init__
-        if not (
-            getattr(current_layout, _LAYOUT_MARKER, False)
-            or getattr(current_layout, _AIMIXER_LAYOUT_MARKER, False)
-        ):
-            if getattr(current_layout, "_h3_motion_context_layout_patch", False):
-                raise RuntimeError("Another incompatible H3 motion-context hook is active")
-            _layout_original = current_layout
-            minimax.PackedLayout.__init__ = _patched_layout_init
-            log.info("Enabled H3 multi-frame continuation timing")
+    def scoped_call(executor, *args, **kwargs):
+        original = executor.original
 
-        _ensure_payload_runtime_locked()
+        def invoke(*inner_args, **inner_kwargs):
+            values = list(inner_args)
+            payload = inner_kwargs.get("minimax_payload", values[4] if len(values) > 4 else None)
+            if isinstance(payload, dict) and (payload.get("keyframes") or payload.get("refs")):
+                streams = values[0] if values else inner_kwargs.get("x")
+                context = values[2] if len(values) > 2 else inner_kwargs.get("context")
+                prepared = _context_payload(payload, streams, context)
+                if len(values) > 4:
+                    values[4] = prepared
+                else:
+                    inner_kwargs["minimax_payload"] = prepared
+                if len(values) > 3 and isinstance(values[3], dict):
+                    values[3] = dict(values[3])
+                elif isinstance(inner_kwargs.get("transformer_options"), dict):
+                    inner_kwargs["transformer_options"] = dict(inner_kwargs["transformer_options"])
+            return original(*values, **inner_kwargs)
 
+        local_executor = copy.copy(executor)
+        local_executor.original = invoke
+        return local_executor(*args, **kwargs)
 
-def _ensure_payload_runtime_locked():
-    global _payload_original
-    import comfy.model_base as model_base
-
-    model_class = getattr(model_base, "MiniMaxH3", None)
-    if model_class is None or not hasattr(model_class, "extra_conds"):
-        raise RuntimeError("This ComfyUI build has no MiniMaxH3.extra_conds")
-    current_payload = model_class.extra_conds
-    if not (
-        getattr(current_payload, _PAYLOAD_MARKER, False)
-        or getattr(current_payload, _AIMIXER_PAYLOAD_MARKER, False)
-    ):
-        if getattr(current_payload, "_h3_motion_context_payload_patch", False):
-            raise RuntimeError("Another incompatible H3 payload hook is active")
-        _payload_original = current_payload
-        model_class.extra_conds = _patched_extra_conds
-        log.info("Enabled H3 continuation/reference payload compatibility")
-
-
-def ensure_payload_runtime():
-    """Keep H3 guide clips and reference assets in the same payload."""
-    with _patch_lock:
-        _ensure_payload_runtime_locked()
-
-
-def ensure_selflift_tiling_runtime():
-    """Repair combined guide/reference payloads after SelfLift spatial tiling.
-
-    SelfLift already crops H3 keyframes per tile, but its current public tiler
-    only rebuilds ``cond_video_latents`` when no references are present. This
-    wrapper remains in the director module and changes no SelfLift source file.
-    """
-    with _patch_lock:
-        for name, module in tuple(sys.modules.items()):
-            if (name != "h3_tiling" and not name.endswith(".h3_tiling")) or module is None:
-                continue
-            original = getattr(module, "_tile_payload", None)
-            if not callable(original) or getattr(original, _SELFLIFT_TILE_MARKER, False):
-                continue
-
-            def tile_payload(*args, __original=original, **kwargs):
-                tiled = __original(*args, **kwargs)
-                keyframes = tiled.get("keyframes") or []
-                references = tiled.get("refs") or []
-                if keyframes and references:
-                    combined = list(keyframes) + list(references)
-                    tiled["cond_video_latents"] = [
-                        item["latent"]
-                        for item in combined
-                        if item.get("latent") is not None
-                    ]
-                    tiled["cond_audio_latents"] = [
-                        item["audio_latent"]
-                        for item in combined
-                        if item.get("audio_latent") is not None
-                    ]
-                return tiled
-
-            setattr(tile_payload, _SELFLIFT_TILE_MARKER, True)
-            module._tile_payload = tile_payload
-            log.info("Enabled SelfLift H3 tiled guide/reference compatibility")
+    patched.remove_wrappers_with_key(WrappersMP.DIFFUSION_MODEL, _CONTEXT_WRAPPER)
+    patched.add_wrapper_with_key(WrappersMP.DIFFUSION_MODEL, _CONTEXT_WRAPPER, scoped_call)
+    return patched
 
 
 def _native_context_supported():
@@ -371,7 +323,6 @@ def apply_motion_context(
         # Older public H3 builds only accepted first/last single-frame anchors.
         # Split the guide over the temporal grid and install the workbench-local
         # position/payload compatibility hooks for those builds only.
-        ensure_context_runtime()
         context_keyframes = [
             {
                 "resolved_frame_index": 0,
@@ -380,7 +331,6 @@ def apply_motion_context(
             }
             for index, offset in enumerate(_step_offsets(int(encoded.shape[2])))
         ]
-    ensure_selflift_tiling_runtime()
 
     output = []
     for tensor, source_metadata in positive:

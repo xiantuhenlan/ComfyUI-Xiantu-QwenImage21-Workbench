@@ -198,13 +198,17 @@ def install_prefix_remask(model, latent, sigmas):
 class XiantuVideoContinuationModelPatch:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"model": ("MODEL",), "latent": ("LATENT",), "sigmas": ("SIGMAS",)}}
+        return {"required": {"model": ("MODEL",), "latent": ("LATENT",), "sigmas": ("SIGMAS",)},
+                "optional": {"context_compat": ("BOOLEAN", {"default": False})}}
 
     RETURN_TYPES = ("MODEL",)
     FUNCTION = "patch"
     CATEGORY = "闲兔/视频编辑"
 
-    def patch(self, model, latent, sigmas):
+    def patch(self, model, latent, sigmas, context_compat=False):
+        if context_compat:
+            from .h3_context_compat import install_context_model
+            model = install_context_model(model)
         return (install_prefix_remask(model, latent, sigmas),)
 
 

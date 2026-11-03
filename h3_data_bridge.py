@@ -97,7 +97,7 @@ class XiantuH3ContinuationDataBridge:
         samples, masks = _streams(latent["samples"]), _streams(raw_mask)
         if len(samples) != 2 or len(masks) != 2:
             raise ValueError("H3续接数据桥需要视频、音频双路Latent和遮罩。")
-        state = model.model_options.get(DRIFT)
+        state = model.model_options.get("xiantu_h3_continuation_state") or model.model_options.get(DRIFT)
         if not callable(getattr(state, "configure_selflift_stage", None)):
             raise ValueError("请把H3续接输出接入数据桥；当前模型未携带续接状态。")
         from comfy.patcher_extension import WrappersMP
@@ -105,6 +105,8 @@ class XiantuH3ContinuationDataBridge:
             patched = source.clone()
             transport = _Transport(samples, masks, copy.copy(state))
             patched.model_options[DRIFT] = transport.state
+            if "xiantu_h3_continuation_state" in patched.model_options:
+                patched.model_options["xiantu_h3_continuation_state"] = transport.state
             patched.set_model_denoise_mask_function(transport.state.denoise_mask_function)
             patched.remove_wrappers_with_key(WrappersMP.APPLY_MODEL, DRIFT)
             patched.add_wrapper_with_key(WrappersMP.APPLY_MODEL, DRIFT, transport.apply_model)
@@ -123,7 +125,7 @@ def route_bridge_after_continuation(data):
     """Only reorder explicit bridge connections around director-injected nodes."""
     graph = data.get("prompt") or {}
     for continuation_id, continuation in list(graph.items()):
-        if continuation.get("class_type") != "MiniMaxH3FiniteLatentContinuation":
+        if continuation.get("class_type") not in {"XiantuH3LatentContinuation", "MiniMaxH3FiniteLatentContinuation"}:
             continue
         inputs = continuation.get("inputs") or {}
         link = inputs.get("target_latent")
