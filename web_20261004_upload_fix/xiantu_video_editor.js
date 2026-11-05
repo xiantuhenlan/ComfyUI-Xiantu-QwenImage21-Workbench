@@ -1968,7 +1968,14 @@ function createWorkbench(node) {
         save();
     };
     const timelineDurationForShot = (shot) => {
-        return Math.max(1 / resolutionState.fps, Number(shot?.seconds || 5));
+        const output = shot?.successfulOutput || shot?.lastOutput;
+        const result = results.find((item) => String(item.shotId) === String(shot?.id)
+            && (!output?.filename || item.filename === output.filename));
+        return Math.max(1 / resolutionState.fps, Number(output?.duration
+            || (Number(output?.frameCount) > 0 ? output.frameCount / (output.frameRate || resolutionState.fps) : 0)
+            || (Number(result?.frameCount) > 0 ? result.frameCount / (result.frameRate || resolutionState.fps) : 0)
+            || result?.actualDuration || result?.duration
+            || shot?.seconds || 5));
     };
     const syncEditSegments = () => {
         const shotIds = new Set(shots.map((shot) => String(shot.id)));
@@ -2026,7 +2033,9 @@ function createWorkbench(node) {
             const { shot, duration } = editSegmentBounds(segment);
             const inherited = index > 0 && String(segment.shotId) !== previousShotId
                 && Boolean(shot?.inheritPrevious || Number(shot?.contextTrimFrames || 0) > 0);
-            const overlap = inherited ? Math.min(overlapSeconds, Math.max(0, duration - minimumDuration), cursor) : 0;
+            // Generated files already exclude the disposable context prefix.
+            // Their visible frames are consecutive, not duplicate intervals.
+            const overlap = 0;
             const start = Math.max(0, cursor - overlap);
             const end = start + duration;
             cursor = Math.max(cursor, end);
@@ -3908,10 +3917,9 @@ function createWorkbench(node) {
             return Object.values(inputs).some((value) => Array.isArray(value) && value.length === 2 && dependsOn(value[0], targetId, seen));
         };
 
-        const usesLatentContinuation = Boolean(shot?.inheritPrevious) && Boolean(useLatentContinuation);
+        const usesLatentContinuation = Boolean(shot?.inheritPrevious);
         const cacheCandidates = [];
-        const visibleEndFrames = (Boolean(shot?.inheritPrevious) ? Number(shot.contextTrimFrames || 0) : 0)
-            + targetOutputFrames(shot.seconds);
+        const visibleEndFrames = 0;
         let continuationCount = 0;
         let cacheSaveCount = 0;
         let previousCacheId = null;
@@ -3920,8 +3928,19 @@ function createWorkbench(node) {
             previousCacheId = allocateId();
             nodes[previousCacheId] = {
                 class_type: "XiantuVideoLatentCacheLoad",
-                inputs: { cache_key: continuityCacheKey(previousShot) },
+                inputs: {
+                    // Every inherited shot reads the same saved AV source.
+                    // Cache availability must never select a different path.
+                    cache_key: "",
+                    previous_output: (previousShot.lastOutput || previousShot.successfulOutput)?.filename
+                        ? JSON.stringify(previousShot.lastOutput || previousShot.successfulOutput) : "",
+                    overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
+                },
             };
+            for (const [inputName, sourceName] of [["video_vae", "VAE"], ["audio_vae", "音频 VAE"]]) {
+                const link = nodes[workbenchId]?.inputs?.[sourceName];
+                if (Array.isArray(link)) nodes[previousCacheId].inputs[inputName] = [...link];
+            }
         }
 
         // Queueing remains one storyboard shot per ComfyUI prompt. Each
@@ -3957,16 +3976,6 @@ function createWorkbench(node) {
                     continuationCount += 1;
                 }
                 installed = true;
-                if (!usesLatentContinuation && shot.inheritPrevious) {
-                    for (const key of ["model", "model_hires"]) {
-                        if (!Array.isArray(sampler.inputs[key])) continue;
-                        const patchId = allocateId();
-                        nodes[patchId] = { class_type: "XiantuVideoContinuationModelPatch", inputs: {
-                            model: sampler.inputs[key], latent: targetLatent, sigmas, context_compat: true,
-                        } };
-                        sampler.inputs[key] = [patchId, 0];
-                    }
-                }
             } else if (samplerType === "SamplerCustomAdvanced") {
                 const guiderLink = sampler.inputs.guider;
                 const targetLatent = sampler.inputs.latent_image;
@@ -3995,13 +4004,6 @@ function createWorkbench(node) {
                     continuationCount += 1;
                 }
                 installed = true;
-                if (!usesLatentContinuation && shot.inheritPrevious) {
-                    const patchId = allocateId();
-                    nodes[patchId] = { class_type: "XiantuVideoContinuationModelPatch", inputs: {
-                        model: guider.inputs.model, latent: targetLatent, sigmas, context_compat: true,
-                    } };
-                    guider.inputs.model = [patchId, 0];
-                }
             }
 
             if (!installed) continue;
@@ -4366,18 +4368,13 @@ function createWorkbench(node) {
                 await reportPreparationStep(4, preparationSteps, "读取生成参数", `${generationResolution.width}×${generationResolution.height} · ${resolutionState.fps} FPS · ${shot.seconds} 秒`);
                 await reportPreparationStep(5, preparationSteps, "读取提示词", `${String(shot.prompt || "").length} 个字符`);
                 await reportPreparationStep(6, preparationSteps, "校验承接关系", shot.inheritPrevious ? "检查上一分镜输出" : "本分镜不承接");
-                const previousCacheStatus = await latentCacheStatus(previous || shot);
-                const useLatentContinuation = Boolean(shot.inheritPrevious) && previousCacheStatus === true;
+                const useLatentContinuation = Boolean(shot.inheritPrevious);
                 const usesContextContinuation = Boolean(shot.inheritPrevious) && (shot.mode !== "frames" || useLatentContinuation);
                 shot.contextTrimFrames = usesContextContinuation ? continuityOverlapFrames : 0;
                 await reportPreparationStep(7, preparationSteps, "写入承接参数", shot.inheritPrevious ? (usesContextContinuation ? `取上一分镜末尾 ${shot.contextTrimFrames} 帧作为 H3 原生上下文` : "取上一分镜最后一帧作为首帧") : "不使用承接");
                 const generationAssets = effectiveAssetsForShot(shot);
                 const previousOutput = shot.inheritPrevious ? await recoverPreviousShotOutput(previous) : null;
-                const needsPreviousVideo = Boolean(shot.inheritPrevious) && (
-                    !useLatentContinuation
-                    || shot.mode === "frames"
-                    || (shot.mode === "image" && !generationAssets.some((asset) => String(asset.type || "").startsWith("image/")))
-                );
+                const needsPreviousVideo = Boolean(shot.inheritPrevious);
                 if (needsPreviousVideo && !previousOutput?.filename) {
                     throw new Error(`${shot.title || `分镜 ${position + 1}`} 要承接上一分镜，但上一分镜还没有已保存的成功输出`);
                 }

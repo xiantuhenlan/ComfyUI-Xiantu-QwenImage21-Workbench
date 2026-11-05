@@ -335,9 +335,14 @@ def command_verify(_: argparse.Namespace) -> int:
 def command_begin(args: argparse.Namespace) -> int:
     current = current_snapshot()
     allowed_nodes = set(args.allow_node)
+    new_nodes = set(args.add_node)
+    existing = sorted(new_nodes & current["nodes"].keys())
+    if existing:
+        raise RuntimeError("新增节点已经存在：" + "、".join(existing))
     unknown = sorted(allowed_nodes - current["nodes"].keys())
     if unknown:
         raise RuntimeError("未知允许节点：" + "、".join(unknown))
+    allowed_nodes.update(new_nodes)
     allowed_features: dict[str, set[str]] = {name: set() for name in allowed_nodes}
     for specification in args.allow_feature:
         if "::" not in specification:
@@ -350,19 +355,22 @@ def command_begin(args: argparse.Namespace) -> int:
     if missing_feature_scope:
         raise RuntimeError("以下节点没有声明预计修改的具体功能：" + "、".join(missing_feature_scope))
     allowed_files = {Path(item).as_posix() for item in args.allow_file}
-    for node_name in allowed_nodes:
+    if new_nodes and not allowed_files:
+        raise RuntimeError("新增节点必须显式声明允许新增的文件")
+    for node_name in allowed_nodes - new_nodes:
         item = current["nodes"][node_name]
         allowed_files.add(item["backendFile"])
         allowed_files.update(item["frontendFiles"])
     protected_features = {
         node_name: sorted(set(current["nodes"][node_name].get("features", {})) - allowed_features.get(node_name, set()))
-        for node_name in allowed_nodes
+        for node_name in allowed_nodes - new_nodes
     }
     scope = {
         "schema": 1,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "reason": args.reason,
         "allowedNodes": sorted(allowed_nodes),
+        "newNodes": sorted(new_nodes),
         "protectedNodes": sorted(set(current["nodes"]) - allowed_nodes),
         "allowedFeatures": {name: sorted(values) for name, values in sorted(allowed_features.items())},
         "protectedFeatures": protected_features,
@@ -384,6 +392,9 @@ def command_verify_scope(_: argparse.Namespace) -> int:
     allowed_nodes, allowed_files = set(scope.get("allowedNodes", [])), set(scope.get("allowedFiles", []))
     allowed_features = {name: set(values) for name, values in scope.get("allowedFeatures", {}).items()}
     violations: list[str] = []
+    for name in scope.get("newNodes", []):
+        if name not in diff["addedNodes"]:
+            violations.append(f"声明的新增节点未新增：{name}")
     changed_file_names = set(diff["changedFiles"] + diff["addedFiles"] + diff["removedFiles"])
     tooling_only = bool(changed_file_names) and all(name.startswith("tools/") for name in changed_file_names)
     if not tooling_only:
@@ -445,6 +456,7 @@ def build_parser() -> argparse.ArgumentParser:
     begin = sub.add_parser("begin", help="修改前锁定允许/保护范围")
     begin.add_argument("--reason", required=True)
     begin.add_argument("--allow-node", action="append", default=[])
+    begin.add_argument("--add-node", action="append", default=[], help="显式声明尚不存在的新节点；仍须声明功能和文件")
     begin.add_argument("--allow-feature", action="append", default=[], help="节点名::功能ID，可重复")
     begin.add_argument("--allow-file", action="append", default=[])
     begin.set_defaults(func=command_begin)

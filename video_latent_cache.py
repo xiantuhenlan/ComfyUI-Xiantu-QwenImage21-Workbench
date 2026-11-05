@@ -86,7 +86,10 @@ def _crop_to_visible_end(latent, visible_end_frames: int):
 class XiantuVideoLatentCacheLoad:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"cache_key": ("STRING", {"default": ""})}}
+        return {"required": {"cache_key": ("STRING", {"default": ""})},
+                "optional": {"previous_output": ("STRING", {"default": ""}),
+                             "video_vae": ("VAE",), "audio_vae": ("VAE",),
+                             "overlap_frames": ("INT", {"default": 22, "min": 1, "max": 2048})}}
 
     RETURN_TYPES = ("LATENT",)
     RETURN_NAMES = ("上一分镜AV Latent",)
@@ -94,18 +97,41 @@ class XiantuVideoLatentCacheLoad:
     CATEGORY = "闲兔/视频编辑/内部"
 
     @classmethod
-    def IS_CHANGED(cls, cache_key):
+    def IS_CHANGED(cls, cache_key, **_kwargs):
         path = _cache_path(cache_key)
         return path.stat().st_mtime_ns if path.is_file() else float("nan")
 
-    def load(self, cache_key):
+    def load(self, cache_key, previous_output="", video_vae=None, audio_vae=None,
+             overlap_frames=22):
         path = _cache_path(cache_key)
-        if not path.is_file():
-            raise ValueError("上一分镜的AV Latent缓存不存在，请先成功生成上一分镜。")
-        try:
-            return (torch.load(path, map_location="cpu", weights_only=False),)
-        except Exception as error:
-            raise ValueError(f"上一分镜AV Latent缓存读取失败：{error}") from error
+        if cache_key and path.is_file():
+            try:
+                return (torch.load(path, map_location="cpu", weights_only=False),)
+            except Exception as error:
+                raise ValueError(f"上一分镜AV Latent缓存读取失败：{error}") from error
+        if not previous_output:
+            raise ValueError("上一分镜的AV Latent缓存不存在，且没有已保存的上一分镜音视频可恢复。")
+        if video_vae is None or audio_vae is None:
+            raise ValueError("恢复上一分镜AV数据需要连接视频VAE和音频VAE；不会改用另一套续接算法。")
+        import json
+        import comfy.audio
+        from .video_editor import _load_video
+        frames, audio = _load_video(json.loads(previous_output))
+        count = int(overlap_frames)
+        if len(frames) < count:
+            raise ValueError("上一分镜视频不足所选上下文帧数。")
+        video = video_vae.encode(frames[-count:])
+        sample_rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
+        if isinstance(audio, dict) and torch.is_tensor(audio.get("waveform")):
+            waveform = audio["waveform"]
+            source_rate = int(audio["sample_rate"])
+            waveform = waveform[..., -round(count / 24 * source_rate):]
+            if source_rate != sample_rate:
+                waveform = comfy.audio.resample(waveform, source_rate, sample_rate)
+        else:
+            waveform = torch.zeros((1, 2, round(count / 24 * sample_rate)))
+        sound = audio_vae.encode(waveform[:1].movedim(1, -1))
+        return ({"samples": NestedTensor((video, sound))},)
 
 
 class XiantuVideoLatentCacheSave:

@@ -315,14 +315,10 @@ class XiantuVideoEditorWorkbench:
         base_frames = max(5, round(max(1.0, float(shot.get("seconds") or 5)) * fps))
         visible_length = max(5, base_frames + (5 - base_frames % 17 + 17) % 17)
         mode = str(shot.get("mode") or "reference")
-        # 新版逐分镜提交由采样器前置桥接节点读取上一分镜 sampled AV
-        # latent，并调用 Timeline Director 的 Drift-Control 续接。工作台
-        # 这里只负责为重叠区扩展目标时长，不再把成品 MP4 重新编码进
-        # H3 条件；旧状态仍保留原生关键帧承接作为兼容回退。
-        latent_continuation = (
-            bool(shot.get("inheritPrevious"))
-            and str(state.get("continuityMode") or "") == "latent"
-        )
+        # All inherited shots use the plugin-owned AV continuation node.
+        # Its input is always recovered from the previous saved clip's AV tail;
+        # cache availability does not change the algorithm or discard audio.
+        latent_continuation = bool(shot.get("inheritPrevious"))
         uses_context_continuation = bool(shot.get("inheritPrevious")) and (
             mode != "frames" or latent_continuation
         )

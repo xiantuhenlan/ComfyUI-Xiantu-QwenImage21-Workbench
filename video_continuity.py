@@ -282,7 +282,9 @@ class XiantuVideoContinuationTrim:
                 "trim_frames": ("INT", {"default": 0, "min": 0, "max": 2048}),
                 "keep_frames": ("INT", {"default": 5, "min": 1, "max": 2048}),
             },
-            "optional": {"audio": ("AUDIO",)},
+            "optional": {"audio": ("AUDIO",),
+                         "previous_output": ("STRING", {"default": ""}),
+                         "anchor_output": ("STRING", {"default": ""})},
         }
 
     RETURN_TYPES = ("IMAGE", "AUDIO")
@@ -290,30 +292,20 @@ class XiantuVideoContinuationTrim:
     FUNCTION = "trim"
     CATEGORY = "闲兔/视频编辑"
 
-    def trim(self, images, trim_frames, keep_frames, audio=None):
+    def trim(self, images, trim_frames, keep_frames, audio=None,
+             previous_output="", anchor_output=""):
         if not torch.is_tensor(images) or int(images.shape[0]) <= 0:
             raise ValueError("视频时长规范节点没有收到有效图像帧")
-        requested_keep = max(1, int(keep_frames))
         start = max(0, min(int(trim_frames), int(images.shape[0])))
-        stop = min(int(images.shape[0]), start + requested_keep)
-        # 精确硬裁剪：承接质量由首帧或所选的 22 帧以上 Latent 上下文负责。
-        # 裁剪后不再做亮度修复、叠化、插帧或任何画面混合。
-        output_images = images[start:stop]
-        if int(output_images.shape[0]) < requested_keep:
-            raise ValueError(
-                f"生成视频只有 {int(images.shape[0])} 帧，裁掉 {start} 帧后不足要求的 {requested_keep} 帧；"
-                "已停止输出，避免复制末帧造成卡顿或重影。"
-            )
+        # keep_frames/previous_output/anchor_output remain accepted for saved
+        # workflows. Only the duplicated head is removed; no tail cap or grade.
+        output_images = images[start:]
         output_audio = audio
         if isinstance(audio, dict) and torch.is_tensor(audio.get("waveform")):
             sample_rate = int(audio.get("sample_rate") or 32000)
             audio_start = int(round(start / FPS * sample_rate))
-            audio_count = int(round(requested_keep / FPS * sample_rate))
             output_audio = dict(audio)
-            waveform = audio["waveform"][..., audio_start:audio_start + audio_count]
-            if int(waveform.shape[-1]) < audio_count:
-                waveform = F.pad(waveform, (0, audio_count - int(waveform.shape[-1])))
-            output_audio["waveform"] = waveform
+            output_audio["waveform"] = audio["waveform"][..., audio_start:]
         return output_images, output_audio
 
 
