@@ -712,11 +712,11 @@ function createWorkbench(node) {
           <section class="xve-asset-dialog" role="dialog" aria-modal="true" aria-label="资产库">
             <header><div><b>资产库</b><span data-library-count>共 0 张图片</span></div><button type="button" data-library-close aria-label="关闭">×</button></header>
             <div class="xve-asset-actions"><button type="button" class="primary" data-library-upload>导入公共资产</button><button type="button" data-library-select-all>全部选择</button><button type="button" data-library-select-none>全部取消</button><button type="button" class="danger" data-library-delete>删除选择</button></div>
-            <nav class="xve-asset-categories"><button type="button" class="active" data-library-category="all">全部资产</button><button type="button" data-library-category="character">角色资产</button><button type="button" data-library-category="scene">场景资产</button><button type="button" data-library-category="prop">道具资产</button><button type="button" data-library-category="other">其他资产</button><button type="button" data-library-category="camera">运镜资产</button><button type="button" data-library-category="blocking">站位资产</button></nav>
+            <nav class="xve-asset-categories"><button type="button" class="active" data-library-category="all">全部资产</button><button type="button" data-library-category="character">角色资产</button><button type="button" data-library-category="scene">场景资产</button><button type="button" data-library-category="prop">道具资产</button><button type="button" data-library-category="other">其他资产</button><button type="button" data-library-category="camera">运镜资产</button><button type="button" data-library-category="blocking">站位资产</button><button type="button" data-library-category="audio">音频资产</button></nav>
             <div class="xve-asset-library-grid" data-library-grid></div>
-            <div class="xve-asset-library-empty" data-library-empty>点击“批量上传图片”或直接拖入图片添加资产</div>
+            <div class="xve-asset-library-empty" data-library-empty>点击“导入公共资产”或拖入图片、音频添加资产</div>
             <footer><button type="button" data-library-close>取消</button><button type="button" class="primary" data-library-apply>应用选中到当前分镜</button></footer>
-            <input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden data-library-files>
+            <input type="file" accept="image/png,image/jpeg,image/webp,audio/*,.wav,.mp3,.flac,.m4a,.ogg,.aac,.wma" multiple hidden data-library-files>
           </section>
         </div>
         <div class="xve-repair-backdrop" data-repair-dialog hidden>
@@ -1857,10 +1857,12 @@ function createWorkbench(node) {
             const note = String(asset.note || "").trim();
             const visual = String(asset.mimeType || "").startsWith("video/")
                 ? `<video src="${asset.url}" muted preload="metadata"></video>`
+                : String(asset.mimeType || "").startsWith("audio/")
+                    ? `<div class="xve-library-file" style="display:flex;align-items:center;height:125px"><audio src="${asset.url}" controls preload="none" style="width:100%;min-width:0" aria-label="试听音频"></audio></div>`
                 : String(asset.mimeType || "").startsWith("image/")
                     ? `<img src="${asset.url}" alt="">`
                     : `<div class="xve-library-file">${escapeHtml(String(asset.relativePath || "").split("/").at(-1) || "文件")}</div>`;
-            card.innerHTML = `${visual}<b title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</b><input type="checkbox" ${asset.selected ? "checked" : ""}><button type="button" class="xve-library-note${note ? " has-note" : ""}" title="${escapeHtml(note || "添加备注")}" data-library-note>${escapeHtml(note || "备注")}</button><div class="xve-library-item-foot"><select title="选择资产分类"><option value="character" ${asset.category === "character" ? "selected" : ""}>角色资产</option><option value="scene" ${asset.category === "scene" ? "selected" : ""}>场景资产</option><option value="prop" ${asset.category === "prop" ? "selected" : ""}>道具资产</option><option value="other" ${asset.category === "other" ? "selected" : ""}>其他资产</option><option value="camera" ${asset.category === "camera" ? "selected" : ""}>运镜资产</option><option value="blocking" ${asset.category === "blocking" ? "selected" : ""}>站位资产</option></select><button type="button" data-library-rename>改名</button></div>`;
+            card.innerHTML = `${visual}<b title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</b><input type="checkbox" ${asset.selected ? "checked" : ""}><button type="button" class="xve-library-note${note ? " has-note" : ""}" title="${escapeHtml(note || "添加备注")}" data-library-note>${escapeHtml(note || "备注")}</button><div class="xve-library-item-foot"><select title="选择资产分类"><option value="character" ${asset.category === "character" ? "selected" : ""}>角色资产</option><option value="scene" ${asset.category === "scene" ? "selected" : ""}>场景资产</option><option value="prop" ${asset.category === "prop" ? "selected" : ""}>道具资产</option><option value="other" ${asset.category === "other" ? "selected" : ""}>其他资产</option><option value="camera" ${asset.category === "camera" ? "selected" : ""}>运镜资产</option><option value="blocking" ${asset.category === "blocking" ? "selected" : ""}>站位资产</option><option value="audio" ${asset.category === "audio" ? "selected" : ""}>音频资产</option></select><button type="button" data-library-rename>改名</button></div>`;
             const persistLibraryAsset = async (changes) => {
                 await commonAssetRequest("/xiantu/video-editor/common-assets/update", {
                     method: "POST",
@@ -1888,6 +1890,8 @@ function createWorkbench(node) {
                 try { await persistLibraryAsset({ note: String(value).trim().slice(0, 2000) }); renderLibrary(); renderAssets(); }
                 catch (error) { showDirectorError(String(error?.message || error)); }
             };
+            const audioPreview = card.querySelector("audio");
+            if (audioPreview) audioPreview.onclick = (event) => { event.stopPropagation(); };
             grid.appendChild(card);
         });
         grid.scrollTop = previousScrollTop;
@@ -1896,12 +1900,12 @@ function createWorkbench(node) {
         root.querySelectorAll("[data-library-category]").forEach((button) => button.classList.toggle("active", button.dataset.libraryCategory === libraryCategory));
     };
     const addLibraryFiles = async (files, categoryOverride = "") => {
-        const images = [...files].filter((file) => file.type.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(file.name));
+        const images = [...files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("audio/") || /\.(jpe?g|png|webp|wav|mp3|flac|m4a|ogg|aac|wma)$/i.test(file.name));
         const category = categoryOverride || (libraryCategory === "all" ? "other" : libraryCategory);
         for (const file of images) {
             const form = new FormData();
-            form.append("category", category);
-            form.append("library_scope", categoryOverride || libraryCategory);
+            form.append("category", file.type.startsWith("audio/") || /\.(wav|mp3|flac|m4a|ogg|aac|wma)$/i.test(file.name) ? "audio" : category);
+            form.append("library_scope", file.type.startsWith("audio/") || /\.(wav|mp3|flac|m4a|ogg|aac|wma)$/i.test(file.name) ? "audio" : categoryOverride || libraryCategory);
             form.append("name", file.name.replace(/\.[^.]+$/, ""));
             form.append("note", "");
             form.append("media", file, file.name || "asset.png");
@@ -1959,9 +1963,14 @@ function createWorkbench(node) {
                 const probe = new Image();
                 probe.onload = () => { asset.width = probe.naturalWidth; asset.height = probe.naturalHeight; renderAssets(); save(); };
                 probe.src = asset.url;
+            } else if (asset.type.startsWith("audio/")) {
+                const probe = document.createElement("audio");
+                probe.preload = "metadata";
+                probe.onloadedmetadata = () => { asset.duration = Number.isFinite(probe.duration) ? probe.duration : 0; renderAssets(); save(); };
+                probe.src = asset.url;
             }
         }
-        activeAssetType = "image";
+        activeAssetType = chosen[0]?.mimeType?.startsWith("audio/") ? "audio" : "image";
         libraryAssets.forEach((asset) => { asset.selected = false; });
         q("[data-library-dialog]").hidden = true;
         syncModeUI();
@@ -2506,7 +2515,7 @@ function createWorkbench(node) {
         libraryDialog.hidden = false;
         try {
             await loadLibraryAssets();
-            q("[data-library-empty]").textContent = "点击“导入公共资产”或直接拖入图片添加资产";
+            q("[data-library-empty]").textContent = "点击“导入公共资产”或拖入图片、音频添加资产";
         } catch (error) {
             console.warn("视频编辑工作台公共资产库读取失败", error);
             libraryAssets = [];
@@ -2520,7 +2529,7 @@ function createWorkbench(node) {
         await addLibraryFiles(libraryFileInput.files || []);
         libraryFileInput.value = "";
     };
-    root.querySelectorAll("[data-library-category]").forEach((button) => button.onclick = () => { libraryCategory = button.dataset.libraryCategory; q("[data-library-grid]").scrollTop = 0; renderLibrary(); });
+    root.querySelectorAll("[data-library-category]").forEach((button) => button.onclick = () => { libraryCategory = button.dataset.libraryCategory; libraryFileInput.accept = libraryCategory === "audio" ? "audio/*,.wav,.mp3,.flac,.m4a,.ogg,.aac,.wma" : "image/png,image/jpeg,image/webp,audio/*,.wav,.mp3,.flac,.m4a,.ogg,.aac,.wma"; q("[data-library-grid]").scrollTop = 0; renderLibrary(); });
     q("[data-library-select-all]").onclick = () => { libraryAssets.filter((asset) => libraryCategory === "all" || asset.category === libraryCategory).forEach((asset) => { asset.selected = true; }); renderLibrary(); };
     q("[data-library-select-none]").onclick = () => { libraryAssets.forEach((asset) => { asset.selected = false; }); renderLibrary(); };
     q("[data-library-delete]").onclick = async () => {

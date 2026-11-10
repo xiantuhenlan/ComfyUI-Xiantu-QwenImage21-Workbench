@@ -103,6 +103,13 @@ class XiantuH3LatentContinuation:
             return positive, target_latent, 0, model
         video, audio = _av(target_latent["samples"])
         previous_video, previous_audio = _av(previous_latent["samples"])
+        # Align only spatial axes; preserve temporal order and audio unchanged.
+        if previous_video.shape[-2:] != video.shape[-2:]:
+            previous_shape = previous_video.shape
+            previous_video = torch.nn.functional.interpolate(
+                previous_video.reshape(-1, 1, *previous_shape[-2:]).float(),
+                size=video.shape[-2:], mode="bilinear", align_corners=False,
+            ).to(dtype=previous_video.dtype).reshape(*previous_shape[:3], *video.shape[-2:])
         if tuple(video.shape[1:2] + video.shape[3:]) != tuple(previous_video.shape[1:2] + previous_video.shape[3:]):
             raise ValueError("上一分镜与当前分镜的H3 Latent空间尺寸不一致。")
         prefix = next((n for n in range(1, int(previous_video.shape[2]) + 1)

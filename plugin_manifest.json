@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "pluginId": "XiantuQwenImage21Director",
   "displayName": "XiantuQwenImage21Director(闲兔导演台插件)",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "channel": "stable",
   "repository": "https://github.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench",
   "updateManifestUrl": "https://raw.githubusercontent.com/xiantuhenlan/ComfyUI-Xiantu-QwenImage21-Workbench/main/plugin_manifest.json"

@@ -53,6 +53,7 @@ _ASSET_CATEGORIES = {
     "other": "其他资产",
     "camera": "运镜资产",
     "blocking": "站位资产",
+    "audio": "音频资产",
 }
 _REPARSE_POINT = 0x400
 _MAX_COMMON_ASSET_BYTES = 128 * 1024 * 1024
