@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "algorithm": "SHA256",
-  "generatedAt": "2026-11-05T08:15:21.254506+00:00",
+  "generatedAt": "2026-11-18T12:27:37.070150+00:00",
   "plugin": "XiantuQwenImage21Director",
   "activeWebDirectory": "web_20261004_upload_fix",
   "nodes": {
@@ -9,7 +9,7 @@
       "displayName": "闲兔｜数字人音乐输出",
       "className": "XiantuDigitalHumanAudioOutput",
       "backendFile": "digital_human.py",
-      "backendFileSha256": "770ceb8d7d2fe48ca6f4ed0d23e9e88bab0e563c2e1f175e928c8385e71b66bf",
+      "backendFileSha256": "e89b1773ffc1f675b0c0624f8a4ef08fb45c7a2b3e2c579c7bb3007a2c920576",
       "backendRegionLines": [
         452,
         465
@@ -51,7 +51,7 @@
       "displayName": "闲兔｜数字人图片输出",
       "className": "XiantuDigitalHumanImageOutput",
       "backendFile": "digital_human.py",
-      "backendFileSha256": "770ceb8d7d2fe48ca6f4ed0d23e9e88bab0e563c2e1f175e928c8385e71b66bf",
+      "backendFileSha256": "e89b1773ffc1f675b0c0624f8a4ef08fb45c7a2b3e2c579c7bb3007a2c920576",
       "backendRegionLines": [
         417,
         432
@@ -93,7 +93,7 @@
       "displayName": "闲兔｜数字人提示词输出",
       "className": "XiantuDigitalHumanPromptOutput",
       "backendFile": "digital_human.py",
-      "backendFileSha256": "770ceb8d7d2fe48ca6f4ed0d23e9e88bab0e563c2e1f175e928c8385e71b66bf",
+      "backendFileSha256": "e89b1773ffc1f675b0c0624f8a4ef08fb45c7a2b3e2c579c7bb3007a2c920576",
       "backendRegionLines": [
         435,
         449
@@ -135,7 +135,7 @@
       "displayName": "闲兔｜数字人工作台",
       "className": "XiantuDigitalHumanStudio",
       "backendFile": "digital_human.py",
-      "backendFileSha256": "770ceb8d7d2fe48ca6f4ed0d23e9e88bab0e563c2e1f175e928c8385e71b66bf",
+      "backendFileSha256": "e89b1773ffc1f675b0c0624f8a4ef08fb45c7a2b3e2c579c7bb3007a2c920576",
       "backendRegionLines": [
         211,
         313
@@ -382,7 +382,7 @@
       "displayName": "闲兔｜数字人工作台 V2",
       "className": "XiantuDigitalHumanStudioV2",
       "backendFile": "digital_human_v2_impl/nodes.py",
-      "backendFileSha256": "642f7f528e9202783058e6e76f1a306169e26e198e31c89a18926a2af58ec49d",
+      "backendFileSha256": "5f0852c41f72796614f42a9f608276bdb96ad3f72d44d63cfc351e55d0e5989d",
       "backendRegionLines": [
         266,
         411
@@ -511,7 +511,7 @@
       "displayName": "闲兔｜组开关管理",
       "className": "XiantuGroupSwitch",
       "backendFile": "group_switch.py",
-      "backendFileSha256": "92b7e191d4e6d34d1be069f45509abcae74fc527a30dfde43eba746c52d9631f",
+      "backendFileSha256": "7558302da4f11ee61b76dcfc607eee1e57fd90cc610857a165bd6ea68245f5a6",
       "backendRegionLines": [
         1,
         22
@@ -653,12 +653,12 @@
       "displayName": "闲兔｜H3续接数据准备（内部）",
       "className": "XiantuH3LatentContinuation",
       "backendFile": "h3_latent_continuation.py",
-      "backendFileSha256": "10000d419e07e6c3faf2dd83fb01d3cd7fcd626f9f660ac3de34c9dbb2459547",
+      "backendFileSha256": "d16f72c6cd73e4bb6ae6201b1a71101f210a55a3377cb8f46d247bf4c7be4471",
       "backendRegionLines": [
         83,
-        141
+        148
       ],
-      "backendRegionSha256": "84edff4b171baeb7b953dfeabb9e053005aee2cce7ce151b13eed08a63f589c1",
+      "backendRegionSha256": "25de6bf418d753a3cca6028df2c184a20dec394df63c432d47fdcb1b541deb42",
       "frontendFiles": [],
       "features": {
         "backend::INPUT_TYPES": {
@@ -675,7 +675,7 @@
           "name": "类结构、字段与非方法代码",
           "lines": [
             83,
-            141
+            148
           ],
           "sha256": "a5f6426c019bee69efee18b60e98ab8dc6e479803e92176ee1d845890db2e9a1"
         },
@@ -684,18 +684,18 @@
           "name": "prepare",
           "lines": [
             99,
-            141
+            148
           ],
-          "sha256": "7cc138ceb24f00d58e9341e2523d6db877c77923bcce56a9b7fdd42013d7af0f"
+          "sha256": "6786bbb9ca521bf739dd718583848d2450a2632b20a203a192a313c4eda3aca8"
         }
       },
-      "fingerprint": "3e989f5c62b25529924c64b5f77743ae07b324bde9a72435639600e4a3ea1233"
+      "fingerprint": "f506968af7e2f254b19d60511abb610065844875b5837a8e4889eef335b7629d"
     },
     "XiantuImageAssetWorkbench": {
       "displayName": "闲兔 图片素材资产工作台",
       "className": "XiantuImageAssetWorkbench",
       "backendFile": "image_asset_workbench.py",
-      "backendFileSha256": "d72785a129d9cf792067844d85dec96f7d9d07a69a45b7872894b7e13faf2eca",
+      "backendFileSha256": "5b533cd6da54d07b0bb2dfcee56e6b96b01ff6cd0e66d036059a70ddd797dfac",
       "backendRegionLines": [
         100,
         261
@@ -763,15 +763,15 @@
           "kind": "frontend-remainder",
           "name": "前端结构、常量、模板与非函数代码",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
-          "sha256": "157a7471dca33feea7216e25d2688a5713f561e03afaae3121d97801d7627ca7"
+          "sha256": "ad5506412d022af75f6efe6bc7ce703fb61b003b2af8e573d465a4440632b4b7"
         },
         "frontend::web_20261004_upload_fix/xiantu_image_asset_workbench.js::applyModelGroupSwitch": {
           "kind": "frontend-function",
           "name": "applyModelGroupSwitch",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            997,
-            1057
+            998,
+            1058
           ],
           "sha256": "dd3e90582847a5d219f1e15b743e64b170d56304ad9076ef3e3c98374e926678"
         },
@@ -780,8 +780,8 @@
           "name": "applyNodeProtocol",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            798,
-            817
+            799,
+            818
           ],
           "sha256": "f7335f4aafb5057d982c7dc703c5b6ee0cb2920185cc9ad587ea500ac90bef2c"
         },
@@ -800,18 +800,18 @@
           "name": "createWorkbench",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            1059,
-            2970
+            1060,
+            2984
           ],
-          "sha256": "de8958de90a98dbaf50f2b7b5c5013fdc47ea03df9f01b90a9596e055ba6549a"
+          "sha256": "fd8c22ccfe5dd0ac232586587c146cbc95b90df5741156261ef845186e7ee884"
         },
         "frontend::web_20261004_upload_fix/xiantu_image_asset_workbench.js::kreaLoraEnabled": {
           "kind": "frontend-function",
           "name": "kreaLoraEnabled",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            952,
-            970
+            953,
+            971
           ],
           "sha256": "910a9eabdd6a6abce6fea427d14db81b37f60636656906af399746a88bcb4e2c"
         },
@@ -820,8 +820,8 @@
           "name": "kreaLoraRoleForNode",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            904,
-            939
+            905,
+            940
           ],
           "sha256": "f97a4b1805575fa954cb79694c19797318ab19ddb473bb1020cfe035ae21d4e3"
         },
@@ -830,8 +830,8 @@
           "name": "modelGroupProfileForNode",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            862,
-            871
+            863,
+            872
           ],
           "sha256": "dd4c196ef4ffa2a0a2d9c4b61e85c276939677b1458613d7964281092eb40ad7"
         },
@@ -890,8 +890,8 @@
           "name": "open",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            3031,
-            3035
+            3045,
+            3049
           ],
           "sha256": "0cc014592f01b97d5d8baa9976fadb00bd308b245f94b18b4382beea198d9a4a"
         },
@@ -910,8 +910,8 @@
           "name": "pointInsideGroup",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            844,
-            851
+            845,
+            852
           ],
           "sha256": "03dab1547299bead63bad7e22f579529efffa0b722b5ebbdea1cc6fa539d3e5c"
         },
@@ -920,8 +920,8 @@
           "name": "pointOriginInsideGroup",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            853,
-            860
+            854,
+            861
           ],
           "sha256": "a47a87496ab5611cbb41605a4cacd1f9cd63fcb0c4d1091f036a585f5b54cee9"
         },
@@ -930,8 +930,8 @@
           "name": "pruneLegacySlots",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            2980,
-            2990
+            2994,
+            3004
           ],
           "sha256": "a6c81af4105edb93d5f42fe0eff437dff9ef6b2ecf23b8a9c381980f725731d5"
         },
@@ -970,8 +970,8 @@
           "name": "qwenLoraContextFromNode",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            895,
-            902
+            896,
+            903
           ],
           "sha256": "698b43c43545d63523e01510e0660c8601607ec4ab69aa027594393c42575cdb"
         },
@@ -980,8 +980,8 @@
           "name": "qwenLoraRoleForNode",
           "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
           "lines": [
-            876,
-            893
+            877,
+            894
           ],
           "sha256": "559b40149b0b19848010fc9f651934e42d87eb1acf4b72a945476eaaaede8f94"
         },
@@ -1006,13 +1006,13 @@
           "sha256": "96a4aeef6bcfb4f43cea1f2f3545ab3a1e287b74ccb71759a5c8ac2ab9524b78"
         }
       },
-      "fingerprint": "20d98deeb84725909169e1966b20b34651ab7120036e45ce3a690c300a13e367"
+      "fingerprint": "0782f61c9b7e78363016faa158ed744e3bee2053bed973274f111fb9e45613f5"
     },
     "XiantuKrea2ImageAssetWorkbench": {
       "displayName": "Krea-2图片资产工作台",
       "className": "XiantuKrea2ImageAssetWorkbench",
       "backendFile": "image_asset_workbench.py",
-      "backendFileSha256": "d72785a129d9cf792067844d85dec96f7d9d07a69a45b7872894b7e13faf2eca",
+      "backendFileSha256": "5b533cd6da54d07b0bb2dfcee56e6b96b01ff6cd0e66d036059a70ddd797dfac",
       "backendRegionLines": [
         320,
         325
@@ -1036,7 +1036,7 @@
       "displayName": "闲兔 LoRA 管理器",
       "className": "XiantuLoraManager",
       "backendFile": "lora_manager.py",
-      "backendFileSha256": "dbae3349601e3805e02709daa2e15cf55d288217ee876f7a5a04a33ab48b3b37",
+      "backendFileSha256": "7bbdda08b66716dd6ddca0bd7b9daf418a416e35387874b96ef868fea746402f",
       "backendRegionLines": [
         54,
         144
@@ -1182,7 +1182,7 @@
       "displayName": "MOSS图片资产工作台",
       "className": "XiantuMossImageAssetWorkbench",
       "backendFile": "moss_image_asset_workbench.py",
-      "backendFileSha256": "a68461497a1b6e4d9dfe8948ece7d429e4b3aa2adf460371119033d50e39a24a",
+      "backendFileSha256": "4c11ed2ea90769302258ef3412c03536867f3f67fd4788adcc6ecbb83635eab9",
       "backendRegionLines": [
         63,
         129
@@ -1440,7 +1440,7 @@
       "displayName": "闲兔姿势提取",
       "className": "XiantuPoseExtractor",
       "backendFile": "pose.py",
-      "backendFileSha256": "b21b3566cfe0f7b18c5ffb3000309521374cab855b04b3fb0599c58782d766d8",
+      "backendFileSha256": "06d43d63d408af27a2387e065d8452770fd5deb4ff04ec7a92a72c831e6ee124",
       "backendRegionLines": [
         121,
         153
@@ -1482,7 +1482,7 @@
       "displayName": "Qwen Image 2.1图片资产工作台",
       "className": "XiantuQwen21ImageAssetWorkbench",
       "backendFile": "image_asset_workbench.py",
-      "backendFileSha256": "d72785a129d9cf792067844d85dec96f7d9d07a69a45b7872894b7e13faf2eca",
+      "backendFileSha256": "5b533cd6da54d07b0bb2dfcee56e6b96b01ff6cd0e66d036059a70ddd797dfac",
       "backendRegionLines": [
         312,
         317
@@ -1506,7 +1506,7 @@
       "displayName": "闲兔Qwen Image 2.1 工作台",
       "className": "XiantuQwenImage21Director",
       "backendFile": "nodes.py",
-      "backendFileSha256": "4b34faf6aa8db17dba3f7ec3be2dd76011e3566fcf883e503cdc982bd0dfc6cf",
+      "backendFileSha256": "b91cbda6c704873a0d04f5576ed6e50d410cb14eb51c48d0ea4c1e052430a8f4",
       "backendRegionLines": [
         18,
         255
@@ -1851,7 +1851,7 @@
       "displayName": "闲兔｜SelfLift 承接合成",
       "className": "XiantuSelfLiftContinuationBlend",
       "backendFile": "video_continuity.py",
-      "backendFileSha256": "234658bd3bd68aad7e618436b0c6b8fe0518db309d4cd38051c2c32190f248d5",
+      "backendFileSha256": "e5dfeb4e67aad25ad26f2af70f6a9e9f7f357cefa4d03e7b69ae5fa855474089",
       "backendRegionLines": [
         242,
         273
@@ -1893,7 +1893,7 @@
       "displayName": "闲兔｜SelfLift 承接适配",
       "className": "XiantuSelfLiftContinuationLatent",
       "backendFile": "video_continuity.py",
-      "backendFileSha256": "234658bd3bd68aad7e618436b0c6b8fe0518db309d4cd38051c2c32190f248d5",
+      "backendFileSha256": "e5dfeb4e67aad25ad26f2af70f6a9e9f7f357cefa4d03e7b69ae5fa855474089",
       "backendRegionLines": [
         215,
         239
@@ -2004,7 +2004,7 @@
       "displayName": "闲兔｜故事模型与 LoRA",
       "className": "XiantuStoryModelLora",
       "backendFile": "story_model_lora.py",
-      "backendFileSha256": "76383936cc0e3aee0d9ee375ac74fded219bbc40b551d7c6066a8fb880c4a171",
+      "backendFileSha256": "81ac3db233f86cf81e2b068597b25d03f4eaba32921f63beb24c50d287fcf553",
       "backendRegionLines": [
         140,
         203
@@ -2132,7 +2132,7 @@
       "displayName": "闲兔｜故事分镜导演台",
       "className": "XiantuStoryboardDirector",
       "backendFile": "storyboard.py",
-      "backendFileSha256": "3b402f6300e38a3a66a26c72584a4c86ec2c1c5173380d7bb6db12f79729b42d",
+      "backendFileSha256": "a4b9cebf699c68932c4184f963edd673921a9c47df0e971c464424728ddcbe6a",
       "backendRegionLines": [
         18,
         394
@@ -2237,7 +2237,7 @@
       "displayName": "闲兔｜分镜中转器",
       "className": "XiantuStoryboardResult",
       "backendFile": "storyboard_result.py",
-      "backendFileSha256": "c0f9429b1700ad901f848b8646587be9b049fc8d28c3299db8344a4056eea32b",
+      "backendFileSha256": "cf553d5ef942bc90aad586e7424396f2e33b0450447e558ce0d09685d8eeac85",
       "backendRegionLines": [
         79,
         183
@@ -2348,7 +2348,7 @@
       "displayName": "闲兔｜视频承接动态重绘",
       "className": "XiantuVideoContinuationModelPatch",
       "backendFile": "video_continuity.py",
-      "backendFileSha256": "234658bd3bd68aad7e618436b0c6b8fe0518db309d4cd38051c2c32190f248d5",
+      "backendFileSha256": "e5dfeb4e67aad25ad26f2af70f6a9e9f7f357cefa4d03e7b69ae5fa855474089",
       "backendRegionLines": [
         198,
         212
@@ -2390,7 +2390,7 @@
       "displayName": "闲兔｜视频承接精确裁剪",
       "className": "XiantuVideoContinuationTrim",
       "backendFile": "video_continuity.py",
-      "backendFileSha256": "234658bd3bd68aad7e618436b0c6b8fe0518db309d4cd38051c2c32190f248d5",
+      "backendFileSha256": "e5dfeb4e67aad25ad26f2af70f6a9e9f7f357cefa4d03e7b69ae5fa855474089",
       "backendRegionLines": [
         276,
         309
@@ -2432,7 +2432,7 @@
       "displayName": "闲兔 漫剧/短剧工作导演台",
       "className": "XiantuVideoEditorWorkbench",
       "backendFile": "video_editor.py",
-      "backendFileSha256": "6e08b3aaced9038c3d44846770a5409d2f6c337edd6f1a2ffc1b853c26b033b9",
+      "backendFileSha256": "88cc98865f4de6d23c35b0a45bd85feb10f5f441c29237adba8f1ef35e89e0b5",
       "backendRegionLines": [
         176,
         478
@@ -2482,25 +2482,35 @@
           "kind": "frontend-remainder",
           "name": "前端结构、常量、模板与非函数代码",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
-          "sha256": "ad9d434a6961a2f81778375928c139e74b569954049c6ae41f757159df719c5a"
+          "sha256": "ecf3ddb6ee6eb2c671c8540098efbeebf9202f84c5532625c2e47ca88d52bd43"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyFunctionGroupModes": {
+          "kind": "frontend-function",
+          "name": "applyFunctionGroupModes",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            219,
+            238
+          ],
+          "sha256": "708a7d4be47c69d85498b491608c987071f628c15715a98c5087325d92478f64"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyTag": {
           "kind": "frontend-function",
           "name": "applyTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4767,
-            4782
+            5213,
+            5229
           ],
-          "sha256": "592b1fcfacd23f3eb5ad3aa775220314e2f6526eb2355cd790bcd8ea181f7db1"
+          "sha256": "ba43c84e620f74f419dc35de27acdeffcc28b9016de51799dec6a3b4563cc002"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::begin": {
           "kind": "frontend-function",
           "name": "begin",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            126,
-            128
+            127,
+            129
           ],
           "sha256": "7f7d9cd1757fc78cd180e7876e38d3f4ff8bce67613f51375ad566031d55a5cc"
         },
@@ -2509,18 +2519,18 @@
           "name": "clearTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4783,
-            4788
+            5230,
+            5236
           ],
-          "sha256": "67f8e70e8a5577af598fac3004fc2f40f2506090b57825defd121af3cfae80a5"
+          "sha256": "87a5a294b5ae2e987505236caf7b7b0d939e6116bcb14d19090e19d5c36aa636"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::compactDirectorNodeSnapshot": {
           "kind": "frontend-function",
           "name": "compactDirectorNodeSnapshot",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            19,
-            35
+            20,
+            36
           ],
           "sha256": "07de8a214ec23e038b8aa62d4d7f6b59091ac2316970d2e2aba22098c1a0c88d"
         },
@@ -2529,8 +2539,8 @@
           "name": "connect",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            129,
-            135
+            130,
+            136
           ],
           "sha256": "44b4d55f83b1764718361dc5c3523b69c9f29d8f94feeff757e9804086244a3f"
         },
@@ -2539,8 +2549,8 @@
           "name": "connectedSelfLiftNodes",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            82,
-            99
+            83,
+            100
           ],
           "sha256": "0d2ae7b533dc2a7c432beab4a5c7b728caf75c50b4da1a56e2b3752ba6f2c3bc"
         },
@@ -2549,18 +2559,18 @@
           "name": "createWorkbench",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            530,
-            4755
+            654,
+            5148
           ],
-          "sha256": "33274568b13ee04db9ff7fee13ab3b69723d269dd554a4e63db8f6ef8f6bf936"
+          "sha256": "28648c5bc70cf1a6f58acf0d79e97c46845acc5bbebc3a73437aef5b0fe26340"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv": {
           "kind": "frontend-function",
           "name": "downloadCsv",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            516,
-            522
+            640,
+            646
           ],
           "sha256": "f2c351c98823f42b0007eb6c039d034001d5d8255d9bbf4b4e2a157feed4ae21"
         },
@@ -2569,8 +2579,8 @@
           "name": "finalizedVideoUrl",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            346,
-            358
+            405,
+            417
           ],
           "sha256": "a02800da3fbc3bf38107f19910ca24b6ddd4971d9efe63dd9d5b0a6cde6fc710"
         },
@@ -2579,18 +2589,28 @@
           "name": "freshSeed",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            254,
-            262
+            297,
+            305
           ],
           "sha256": "39d237e70ee5582f0376ba21abee449c8e2268c4ec5a2cabcf80bc71c32e3a52"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::functionGroupMembers": {
+          "kind": "frontend-function",
+          "name": "functionGroupMembers",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            214,
+            217
+          ],
+          "sha256": "74eba2bd25cacb175dd2ca92c5088307efbec88727546be5a0a0a97952284bd3"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::functionTagDisplayName": {
           "kind": "frontend-function",
           "name": "functionTagDisplayName",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            215,
-            220
+            258,
+            263
           ],
           "sha256": "e85b3e668bbf9e48bb1ce36785c16d1e5c614b064a7165f15a7c646cc5a15d89"
         },
@@ -2599,8 +2619,8 @@
           "name": "hideInternalWidget",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4836,
-            4846
+            5284,
+            5294
           ],
           "sha256": "560a7bfd1b8e4a2042721df1ef79a2350884e34be5523f041cc91e5e7367c911"
         },
@@ -2609,8 +2629,8 @@
           "name": "injectWorkflowSeed",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            334,
-            344
+            393,
+            403
           ],
           "sha256": "30157d3c530d66533641b478f5971d05ad6adc63100c4e7c6781a7767477e771"
         },
@@ -2619,8 +2639,8 @@
           "name": "installInlineFallback",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            232,
-            246
+            275,
+            289
           ],
           "sha256": "796d4324ba553d09c23f4d68fa45e192525a7f6e72dec8890f6572924beb884e"
         },
@@ -2629,8 +2649,8 @@
           "name": "open",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            4871,
-            4882
+            5319,
+            5330
           ],
           "sha256": "f4cf0f0ac2321c062f2f51c8d39e7a5017c9e1d1d37b97d9784421512ab559a3"
         },
@@ -2639,8 +2659,8 @@
           "name": "parseCsv",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            498,
-            515
+            622,
+            639
           ],
           "sha256": "55208e259e2cd5e249db422d6d8876ba8850320c46411dc2d097bd9931e8c353"
         },
@@ -2649,8 +2669,8 @@
           "name": "persistedAssetUrl",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            524,
-            528
+            648,
+            652
           ],
           "sha256": "37364538c0c750ef9b3c13f1dadcac912ae66c4def00b83fb888a612d39eeb24"
         },
@@ -2659,8 +2679,8 @@
           "name": "readDirectorRecovery",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            45,
-            54
+            46,
+            55
           ],
           "sha256": "cc53b14958c79e716eee14813b587382ca5cff33fa427b30e073a9b8d9242c1d"
         },
@@ -2669,8 +2689,8 @@
           "name": "readFunctionTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            210,
-            214
+            253,
+            257
           ],
           "sha256": "efd267eb3d80f87622e1cb7230f39206536e1dde041c3bbf6ff3a7afce580109"
         },
@@ -2679,8 +2699,8 @@
           "name": "refreshWorkflowSeed",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            320,
-            333
+            379,
+            392
           ],
           "sha256": "fb8b835b7f2e32d46e36de9cf23f6d651fe800b8fa61a77d09b6088da02b17cd"
         },
@@ -2689,8 +2709,8 @@
           "name": "remove",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            136,
-            158
+            137,
+            159
           ],
           "sha256": "42b9926bb2a13c1303c7e4e53031bf12dcf5f297772eec5289e34b3bf5500241"
         },
@@ -2699,8 +2719,8 @@
           "name": "repairFinalizedVideoElements",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            359,
-            414
+            418,
+            473
           ],
           "sha256": "eebb422446339b93c081be9f6c6fe66e328262046d4d023d304495f3fa7a6201"
         },
@@ -2709,18 +2729,68 @@
           "name": "scopeWorkbenchPrompt",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            289,
-            319
+            348,
+            378
           ],
           "sha256": "bdf4ffd12667e49d7ebb0ce688201716ac878d8026f6e34c00925abe00342ff0"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::setFunctionGroupTag": {
+          "kind": "frontend-function",
+          "name": "setFunctionGroupTag",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            239,
+            252
+          ],
+          "sha256": "36535e91f8f8fa3bc6a33b868ae1b442851cc03acc6c20d1e67a0a83cd00add3"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetJson": {
+          "kind": "frontend-function",
+          "name": "sheetJson",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            553,
+            557
+          ],
+          "sha256": "6d9b5c06304209d3b27c849d2de43ef1766f8fe1429b2cf00f6986eab1b0cb16"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetNodeMapping": {
+          "kind": "frontend-function",
+          "name": "sheetNodeMapping",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            571,
+            580
+          ],
+          "sha256": "5248eb3d06414627aa3a21676d3cb8327c00263c19e09c83c85df41381668952"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetRemapSelections": {
+          "kind": "frontend-function",
+          "name": "sheetRemapSelections",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            581,
+            588
+          ],
+          "sha256": "80c5167bcff2c68ee8309fc798b4198307edacdd5aa53d1654c4c48d728c401f"
+        },
+        "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetRestoreFunctionMarks": {
+          "kind": "frontend-function",
+          "name": "sheetRestoreFunctionMarks",
+          "file": "web_20261004_upload_fix/xiantu_video_editor.js",
+          "lines": [
+            589,
+            615
+          ],
+          "sha256": "35efdb8bf03c37aca5cf1eb3b2460a5c70e670c3bdd162708c9775a2072f0d3e"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::source": {
           "kind": "frontend-function",
           "name": "source",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            107,
-            112
+            108,
+            113
           ],
           "sha256": "7cf3efa4d62a579d503757e5f3b892ed01c27af3f6618ffd31b213ff68fbe2c0"
         },
@@ -2729,29 +2799,29 @@
           "name": "workbenchGraphScope",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            263,
-            288
+            306,
+            347
           ],
-          "sha256": "81453ca95b67ca7769860590f0c445e6bc716a87881b8e984682a1358fb3545f"
+          "sha256": "abf9d700656368d2f1e0ab141361f73bb2447e05dd5dc037deb04a043dde6fe6"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::writeDirectorRecovery": {
           "kind": "frontend-function",
           "name": "writeDirectorRecovery",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            55,
-            79
+            56,
+            80
           ],
           "sha256": "3fa0593b4cdbaf72cca64cce0aa7c4cb9d7bf325bf0aef6e7dc4991816002be5"
         }
       },
-      "fingerprint": "bbd9c792673042124f9b98ed8fea436191d8dc3b6e74eb4eddf0b0fc33076334"
+      "fingerprint": "5afbb2264a9219a2036a2bdc929b24c3d2257a9f266abb6233002b449c68a56c"
     },
     "XiantuVideoFaceRepair": {
       "displayName": "闲兔｜远景人脸修复",
       "className": "XiantuVideoFaceRepair",
       "backendFile": "video_postprocess.py",
-      "backendFileSha256": "d46567bbc513eade8432762ade687b1595fcbc3dd558d406d3fb6da1dd031ff3",
+      "backendFileSha256": "213c2b7ee9ffb931208d1d797f4b9cd2c29142ff64aaefc73d901ce3d4181ecd",
       "backendRegionLines": [
         274,
         356
@@ -2793,29 +2863,29 @@
       "displayName": "闲兔｜读取上一分镜AV Latent（内部）",
       "className": "XiantuVideoLatentCacheLoad",
       "backendFile": "video_latent_cache.py",
-      "backendFileSha256": "7116928930fbbf0502c7b5085a4097980d32c519a604183537ca6c68c2f84da1",
+      "backendFileSha256": "64bbe0e2f98e3b61a98b4d7f7dbe6df48080c8923c5eaa1bef3ef5095b51768e",
       "backendRegionLines": [
-        86,
-        134
+        149,
+        205
       ],
-      "backendRegionSha256": "79601fc69d55179fd45f55b4e398d507e6d609bc6a606c217fb1230c743b139c",
+      "backendRegionSha256": "6d4685c2bd374ea44056804dd334d470eeaa459b396add72faa86bb7c5219622",
       "frontendFiles": [],
       "features": {
         "backend::INPUT_TYPES": {
           "kind": "backend-method",
           "name": "INPUT_TYPES",
           "lines": [
-            88,
-            92
+            151,
+            156
           ],
-          "sha256": "5fb98d58d2a11a8e24766c43eda2ce38c0845d7dcada5bdee26aeb3e64dfc7c5"
+          "sha256": "004c107e694f4cfd3b9c96bc5ecced7b51314af7f598d047d7d939ca2a479eb8"
         },
         "backend::IS_CHANGED": {
           "kind": "backend-method",
           "name": "IS_CHANGED",
           "lines": [
-            100,
-            102
+            164,
+            166
           ],
           "sha256": "8fd87239a7c564b56e722ad8b4c15d59b23166a3e8c2944374457742f7a42a87"
         },
@@ -2823,8 +2893,8 @@
           "kind": "backend-remainder",
           "name": "类结构、字段与非方法代码",
           "lines": [
-            86,
-            134
+            149,
+            205
           ],
           "sha256": "ebd51fd01ee1c8ab8147eee2a1f82e994f05eaab6475ac8c3eace111afbd89bc"
         },
@@ -2832,22 +2902,22 @@
           "kind": "backend-method",
           "name": "load",
           "lines": [
-            104,
-            134
+            168,
+            205
           ],
-          "sha256": "741b2739739cf8cb2719085658f91a17ca21e97faf487f7ee593d4158848078a"
+          "sha256": "0ecf72c163179a7cdc7aa27c22ef09dab2ef970ef2ea81a963087cefd0b6b910"
         }
       },
-      "fingerprint": "a2dbaa836b66b1595e2d8eba86a1e189597c864a2930328a4930bb52d76c8c96"
+      "fingerprint": "77e7ab43dd9c35631d27acb9767c8f102fa3904953ccc039f381399e0e233bc4"
     },
     "XiantuVideoLatentCacheSave": {
       "displayName": "闲兔｜保存分镜AV Latent（内部）",
       "className": "XiantuVideoLatentCacheSave",
       "backendFile": "video_latent_cache.py",
-      "backendFileSha256": "7116928930fbbf0502c7b5085a4097980d32c519a604183537ca6c68c2f84da1",
+      "backendFileSha256": "64bbe0e2f98e3b61a98b4d7f7dbe6df48080c8923c5eaa1bef3ef5095b51768e",
       "backendRegionLines": [
-        137,
-        166
+        208,
+        237
       ],
       "backendRegionSha256": "046607a0d8fdde91738ed47c3e0847ce1bfcb090a6df93e9d35ab99e888e16d3",
       "frontendFiles": [],
@@ -2856,8 +2926,8 @@
           "kind": "backend-method",
           "name": "INPUT_TYPES",
           "lines": [
-            139,
-            148
+            210,
+            219
           ],
           "sha256": "6c0893852925093e618824d26e69a209a110d974562fbc83eb0f01ecdcd04b7d"
         },
@@ -2865,8 +2935,8 @@
           "kind": "backend-remainder",
           "name": "类结构、字段与非方法代码",
           "lines": [
-            137,
-            166
+            208,
+            237
           ],
           "sha256": "5062da8dfc3c6343306f1d14fbdeb4791bd71fc006f77195fdc98cf80021a8a7"
         },
@@ -2874,8 +2944,8 @@
           "kind": "backend-method",
           "name": "save",
           "lines": [
-            156,
-            166
+            227,
+            237
           ],
           "sha256": "e057598c720ac618331584806967dd9c165b62af976edf653597b919ccc0c697"
         }
@@ -2885,112 +2955,112 @@
   },
   "files": {
     ".comfyignore": {
-      "sha256": "35da23a934afcb9572bfb7894c33a2d8ba33e433f07959f972ae8bc9e97ef87c",
-      "size": 278
+      "sha256": "e56f1517b2ba322a7ef0401038a0913556f654cd90a34535a67a27e482982c31",
+      "size": 249
     },
     ".gitignore": {
-      "sha256": "eea1acd7e78dc1e77f03f355a197bd6234eabe12622b586b9790784d412ddcca",
-      "size": 127
+      "sha256": "81354df89bdf020e1e24ff0bf55a37e09f70063a7b206369e0a9158a5bcfcffb",
+      "size": 146
     },
     "CHANGELOG.md": {
-      "sha256": "c4d9dac2ededaba3359ffe0e959feb860c4c28f9762d8840e8f6bdb4f693596d",
-      "size": 27470
+      "sha256": "d3bde1fe21ae0e4fb85dcc64bdafddf75bc0bcae271309213e27d356dccf4c5e",
+      "size": 29721
     },
     "LICENSE": {
-      "sha256": "2bf2e6b782086e644960f3622988200738c995e40cd465f17be69f12ca22bdca",
-      "size": 1064
+      "sha256": "e6df8f0619987e25790f0721114e025679ffe8a9d6b3253eb053dc89d854192b",
+      "size": 1086
     },
     "MOSS_IMAGE_OFFICIAL_PROMPT_REFERENCE.md": {
-      "sha256": "3b685846ce01a4807a36b377bd8c8d99fca975de22b623a2fcb45b7cb4c068dd",
-      "size": 2224
+      "sha256": "4e02a9ab454a4e653a8b0ccab27cfcab10681155af7e4616fb532cfc72ee9002",
+      "size": 2265
     },
     "README.md": {
-      "sha256": "89ad44961c421cfae49dadf72353e32c2273b72b47b4b13e79c02fa1c973e57c",
-      "size": 4244
+      "sha256": "d9b7395c96e70bb192e6f6b6e5ad881e21655c9bb7f0a4fee7912f94e32a438b",
+      "size": 4349
     },
     "UPDATE_RULES.md": {
-      "sha256": "83d1eca7f360e9cd401341de6a2ce8cf2bbb3539bcb0522c9144ef73fcc56f3b",
-      "size": 1985
+      "sha256": "728760f9d6fea926973f9340aa9c867a287906f09e855c9b5efd88ae176710ab",
+      "size": 2031
     },
     "__init__.py": {
-      "sha256": "a809b6aa985b476de96bcc28367bb964ea8d4312e4e1d6cd889a55570bf2bd98",
-      "size": 6818
+      "sha256": "f9c191fd7402731787467fa4a589680ff1781ee01912d3fd1fb92bd390b0939e",
+      "size": 6953
     },
     "digital_human.py": {
-      "sha256": "770ceb8d7d2fe48ca6f4ed0d23e9e88bab0e563c2e1f175e928c8385e71b66bf",
-      "size": 19601
+      "sha256": "e89b1773ffc1f675b0c0624f8a4ef08fb45c7a2b3e2c579c7bb3007a2c920576",
+      "size": 20080
     },
     "digital_human_v2_impl/__init__.py": {
-      "sha256": "01f61b7f2b27073b15b78cba592d96fd8a6bb150d293014450d560997a9c57ea",
-      "size": 164
+      "sha256": "8a7f9c5a5997f4841ccd9d4bb2dcb880baa0b0594742764090d4164f836ca0f7",
+      "size": 168
     },
     "digital_human_v2_impl/nodes.py": {
-      "sha256": "642f7f528e9202783058e6e76f1a306169e26e198e31c89a18926a2af58ec49d",
-      "size": 18995
+      "sha256": "5f0852c41f72796614f42a9f608276bdb96ad3f72d44d63cfc351e55d0e5989d",
+      "size": 19410
     },
     "digital_human_v2_impl/routes.py": {
-      "sha256": "c427cbc40391096683532b951210483ac04d79ee22aeb1746f9b01101e54c075",
-      "size": 22069
+      "sha256": "e08e06790d7f1db7648e5cb65ea54adcc1c0857909e1662857969bc485d07cf9",
+      "size": 22585
     },
     "digital_human_v2_impl/storage.py": {
-      "sha256": "c2fa68acc1efd13a326e20866cc177c2518bbe1fe3e168d593db86addd07a481",
-      "size": 9614
+      "sha256": "08b7f3096fef426c39c651b87ec88dc46a84ba90874a1176eb837f006e28990e",
+      "size": 9864
     },
     "group_switch.py": {
-      "sha256": "92b7e191d4e6d34d1be069f45509abcae74fc527a30dfde43eba746c52d9631f",
-      "size": 833
+      "sha256": "7558302da4f11ee61b76dcfc607eee1e57fd90cc610857a165bd6ea68245f5a6",
+      "size": 864
     },
     "h3_context_compat.py": {
-      "sha256": "5e5beba3b3ef4fc4b7a4493f311ceb9001282b8aba8c5e7a05c0beb3ad67563d",
-      "size": 13140
+      "sha256": "7c3bc4db5d9ea36566908dc512159fa70026889cd0a260fbacccc2fd64308664",
+      "size": 13496
     },
     "h3_data_bridge.py": {
       "sha256": "ebe53070f2c6cd3d033562d358dbd2cff7baca06e26feaa6c66a2852084733c6",
       "size": 7900
     },
     "h3_latent_continuation.py": {
-      "sha256": "10000d419e07e6c3faf2dd83fb01d3cd7fcd626f9f660ac3de34c9dbb2459547",
-      "size": 7981
+      "sha256": "d16f72c6cd73e4bb6ae6201b1a71101f210a55a3377cb8f46d247bf4c7be4471",
+      "size": 8478
     },
     "image_asset_workbench.py": {
-      "sha256": "d72785a129d9cf792067844d85dec96f7d9d07a69a45b7872894b7e13faf2eca",
-      "size": 14517
+      "sha256": "5b533cd6da54d07b0bb2dfcee56e6b96b01ff6cd0e66d036059a70ddd797dfac",
+      "size": 14854
     },
     "integrations/__init__.py": {
-      "sha256": "c7c63b27433ec2adcdb2ddebc11947165090a959261b4c1ca2ac96bc75564234",
-      "size": 58
+      "sha256": "62016c0831550afc8c1b305ede7f58d154ef4fcf7a6379c32d31932fe94847b0",
+      "size": 59
     },
     "local_image_import.py": {
-      "sha256": "fdb24754f6de5e0fbe0160ccd2c49ae882599b7e2ed01e9487e85fcf07e49446",
-      "size": 61386
+      "sha256": "611a4147b814cc6f9b7b3c673fcfae06b32593435d9cb23b220e1ea203acc641",
+      "size": 60131
     },
     "lora_manager.py": {
-      "sha256": "dbae3349601e3805e02709daa2e15cf55d288217ee876f7a5a04a33ab48b3b37",
-      "size": 5052
+      "sha256": "7bbdda08b66716dd6ddca0bd7b9daf418a416e35387874b96ef868fea746402f",
+      "size": 5200
     },
     "moss_image_asset_workbench.py": {
-      "sha256": "a68461497a1b6e4d9dfe8948ece7d429e4b3aa2adf460371119033d50e39a24a",
-      "size": 4542
+      "sha256": "4c11ed2ea90769302258ef3412c03536867f3f67fd4788adcc6ecbb83635eab9",
+      "size": 4680
     },
     "nodes.py": {
-      "sha256": "4b34faf6aa8db17dba3f7ec3be2dd76011e3566fcf883e503cdc982bd0dfc6cf",
-      "size": 9957
+      "sha256": "b91cbda6c704873a0d04f5576ed6e50d410cb14eb51c48d0ea4c1e052430a8f4",
+      "size": 10221
     },
     "plugin_manifest.json": {
-      "sha256": "702314d87205ebcc2ed327c6f7b0cececbca09196db0b8f3fd6ab3518d9a2feb",
+      "sha256": "b10e0243e82d408087d1db1cb9fbf55c5762227ee498e6f50cb10ee6acae1ab1",
       "size": 406
     },
     "pose.py": {
-      "sha256": "b21b3566cfe0f7b18c5ffb3000309521374cab855b04b3fb0599c58782d766d8",
-      "size": 6227
+      "sha256": "06d43d63d408af27a2387e065d8452770fd5deb4ff04ec7a92a72c831e6ee124",
+      "size": 6409
     },
     "pyproject.toml": {
-      "sha256": "e259a204f3eb70f43ed49db74cdb0e8d765e67174101938f36e632c41e4c1a48",
+      "sha256": "a2bc527a9ac916b4c67089ec723fadc4b7349f2793ba1d527f20766a81af1eea",
       "size": 764
     },
     "requirements.txt": {
-      "sha256": "1a967f83a3a4a00855441fb5a9719bb5dc4c9f4d6c2c4764f50221f278a1a65f",
-      "size": 60
+      "sha256": "0cb1c864f9e08a2cf2b19288c33aee5c3664972cdede6c8c91313607f838f1cb",
+      "size": 64
     },
     "sampler_relay.py": {
       "sha256": "0524053e19d38dc7dfa3e6ff9cdef29f412d195ee6c41dfccd80b0bde6786d71",
@@ -3001,20 +3071,20 @@
       "size": 2504
     },
     "story_model_lora.py": {
-      "sha256": "76383936cc0e3aee0d9ee375ac74fded219bbc40b551d7c6066a8fb880c4a171",
-      "size": 7026
+      "sha256": "81ac3db233f86cf81e2b068597b25d03f4eaba32921f63beb24c50d287fcf553",
+      "size": 7236
     },
     "storyboard.py": {
-      "sha256": "3b402f6300e38a3a66a26c72584a4c86ec2c1c5173380d7bb6db12f79729b42d",
-      "size": 17065
+      "sha256": "a4b9cebf699c68932c4184f963edd673921a9c47df0e971c464424728ddcbe6a",
+      "size": 17466
     },
     "storyboard_ai.py": {
-      "sha256": "e7a8438a65bb6ba8a0a77568a144a389a8c859f8c827c006513de3dbbfeaa2a9",
-      "size": 47329
+      "sha256": "fa4b9a1aabea72218e80460ec9cebfd017e1253c5d05b6445a05597702a67c64",
+      "size": 48376
     },
     "storyboard_result.py": {
-      "sha256": "c0f9429b1700ad901f848b8646587be9b049fc8d28c3299db8344a4056eea32b",
-      "size": 7563
+      "sha256": "cf553d5ef942bc90aad586e7424396f2e33b0450447e558ce0d09685d8eeac85",
+      "size": 7766
     },
     "tools/node_integrity.py": {
       "sha256": "e63cb0320ea5d66654cb5b7429037ad01fe316af03ec7ea6f4a21063b7544ee9",
@@ -3025,72 +3095,76 @@
       "size": 1785
     },
     "video_continuity.py": {
-      "sha256": "234658bd3bd68aad7e618436b0c6b8fe0518db309d4cd38051c2c32190f248d5",
-      "size": 13730
+      "sha256": "e5dfeb4e67aad25ad26f2af70f6a9e9f7f357cefa4d03e7b69ae5fa855474089",
+      "size": 14039
     },
     "video_editor.py": {
-      "sha256": "6e08b3aaced9038c3d44846770a5409d2f6c337edd6f1a2ffc1b853c26b033b9",
-      "size": 22141
+      "sha256": "88cc98865f4de6d23c35b0a45bd85feb10f5f441c29237adba8f1ef35e89e0b5",
+      "size": 22374
     },
     "video_latent_cache.py": {
-      "sha256": "7116928930fbbf0502c7b5085a4097980d32c519a604183537ca6c68c2f84da1",
-      "size": 7172
+      "sha256": "64bbe0e2f98e3b61a98b4d7f7dbe6df48080c8923c5eaa1bef3ef5095b51768e",
+      "size": 10483
     },
     "video_postprocess.py": {
-      "sha256": "d46567bbc513eade8432762ade687b1595fcbc3dd558d406d3fb6da1dd031ff3",
-      "size": 15761
+      "sha256": "213c2b7ee9ffb931208d1d797f4b9cd2c29142ff64aaefc73d901ce3d4181ecd",
+      "size": 16125
+    },
+    "video_prompt_optimizer.py": {
+      "sha256": "25525a97f73fe9745bc9467cf2570b3f23fa0717789d494c58be51a5df9889fd",
+      "size": 53976
     },
     "web_20261004_upload_fix/assets/xiantu-rabbit-logo.png": {
       "sha256": "62fbbd3ccecfa87aea6938abf0fe884e5038d09737b8a8732a523e5a3c0aaa2f",
       "size": 1107775
     },
     "web_20261004_upload_fix/xiantu_digital_human_v2.css": {
-      "sha256": "4b6e2e85d68460dc5b50a38d8e17c4cc01b08024f3e0134f1d0e246c07865a01",
-      "size": 44065
+      "sha256": "142040d731a2b23374ce7eec11c3a670e002647634389355aaf0573605e9b138",
+      "size": 44240
     },
     "web_20261004_upload_fix/xiantu_digital_human_v2.js": {
-      "sha256": "2915b2bbf34588276d087dc9d44dab76403c3ed47f0eeaf66db611c5322bd558",
-      "size": 91184
+      "sha256": "2f5889619d22d1e131c97b48e394c9dbae76bb3759df32398f993082efabcfa6",
+      "size": 91955
     },
     "web_20261004_upload_fix/xiantu_digital_human_v4.js": {
-      "sha256": "fbddf0b3dfdf672239ea6a40b3f5ba5e64628912ece7d7f7eccfd3d3e8eec6b5",
-      "size": 64094
+      "sha256": "6055851a5a73e5075b256b65e32b8a23375753a02c544cf5de07cb5e93160917",
+      "size": 64875
     },
     "web_20261004_upload_fix/xiantu_director_apps.js": {
       "sha256": "2287c30f45332f2cd21015c74fb82f06a1d8016dd269a933ff1fdb981538218d",
       "size": 12309
     },
     "web_20261004_upload_fix/xiantu_group_switch.js": {
-      "sha256": "e81d06de50baff3c7b1cb3757117ac8fe71f670577f90b1660caec73b6f7613b",
-      "size": 9296
+      "sha256": "c18dca08ae0d8e995644b9b3862ace9be446d302e716ee91626826850ed42e1a",
+      "size": 9468
     },
     "web_20261004_upload_fix/xiantu_image_asset_workbench.css": {
-      "sha256": "9e70bd6f475a86abb7a58ab9fba258feeb5b40cdd5444789800d3061a3f2820c",
-      "size": 50434
+      "sha256": "6fff580d62a6346d4a21d96daa6d55a2dc550daf44be3798a55cd2fb2d8dd248",
+      "size": 50673
     },
     "web_20261004_upload_fix/xiantu_image_asset_workbench.js": {
-      "sha256": "d2219743fba35f755f0ba8915f08888d62ad7877d49f2a34e9ba0b75c4d50fc3",
-      "size": 288084
+      "sha256": "4fd0e756d9cdf03b518955852a823b9f8bc8b3dfd5429f1d05ff91ef347c99eb",
+      "size": 289261
     },
     "web_20261004_upload_fix/xiantu_krea2_prompts.js": {
       "sha256": "73e3c279fdd399a91910358583f36156c8b3be5a0771682910060b653ccc2372",
       "size": 18071
     },
     "web_20261004_upload_fix/xiantu_lora_manager.js": {
-      "sha256": "552dbe742b10ea287589a76cd83235ce1dab89bc0d4beff74d82f7c7c4bb180e",
-      "size": 10750
+      "sha256": "d94c823287afc3a9949462660031a9fb2f6ba25daa490bae273cdb74bde0c8a8",
+      "size": 10850
     },
     "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.css": {
-      "sha256": "724c10635d20d9dcdd5f17e02d82df285b6ba9c761951210976968fd5b6b33d2",
-      "size": 45998
+      "sha256": "aca53c326627afbd89f6cc40353156c777f7197b74afa1270241ded16f42e0ae",
+      "size": 46192
     },
     "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js": {
-      "sha256": "9f417b773471c4f4f4fc1c8509d8672c30f3f3ed930e676ff7f5685ebbf38fad",
-      "size": 229604
+      "sha256": "91ce65a1bfa64130275c2f063c6e7145ea79d0d0506cd08c621c1d059a7ee635",
+      "size": 229706
     },
     "web_20261004_upload_fix/xiantu_qwen_image21_director.js": {
-      "sha256": "93f3fd6cac0dcc7edc7e48dde403e15e89651e2e6129ac0b7ddfd1d0d1e4ec40",
-      "size": 106257
+      "sha256": "500af4ee8ac70c9867ee5ecd2f4be805f1e0e7bb8896133d7825e22c9642a2a3",
+      "size": 107199
     },
     "web_20261004_upload_fix/xiantu_sampler_relay.js": {
       "sha256": "f9a33f52f2d1e9a1e0b837cd98aebc5ad1a7b0c288a44f58eb2f567e0f0daacc",
@@ -3101,24 +3175,28 @@
       "size": 1812
     },
     "web_20261004_upload_fix/xiantu_story_model_lora.js": {
-      "sha256": "d67154d288c310ffa057364eb9b7a86afbc71c9c0996b6228fd0d3d0bddfcb20",
-      "size": 7765
+      "sha256": "6a9cabc7f9c8beffc16eaf4800eb764146c8437f119e6b4a4919604e1039d6b1",
+      "size": 7812
     },
     "web_20261004_upload_fix/xiantu_storyboard_director.js": {
-      "sha256": "94044e5e2763263ec26ed4778863d9029a9fd1baf8314eb608e78c44ad4b2606",
-      "size": 80285
+      "sha256": "c2b6f9a39656bbcfe3538704ef71269bdcfff09684427baadb12dee05e486fff",
+      "size": 80578
     },
     "web_20261004_upload_fix/xiantu_universal_relay.js": {
       "sha256": "a3a868871d7cfe8561b6e8b54b6222984d5b1ae48373d3f3ae3dfc26b5a28da1",
       "size": 1866
     },
     "web_20261004_upload_fix/xiantu_video_editor.css": {
-      "sha256": "b33d749d01ae57dc885a84714578f3efa1c7c659cb8fe2b46c3b827ea16c405f",
-      "size": 115114
+      "sha256": "274e6666e48e605e566a52cbc5ff50b5425148f83daf6e625e5c362f93aa527a",
+      "size": 117555
     },
     "web_20261004_upload_fix/xiantu_video_editor.js": {
-      "sha256": "c442c31e42e6e78256db14cf844f940e8535c501212fd421659ef31a96b4ef9f",
-      "size": 320318
+      "sha256": "e3bed6b147814bc8c6fa67600b10ae2d0789df6916ede7f62bf5bfaea5f612e5",
+      "size": 348250
+    },
+    "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js": {
+      "sha256": "4dd10e3a0e676dff43cf7a6e0d4b64a0613a828cf90bdeafc57ee4b6db4ea900",
+      "size": 16459
     }
   }
 }

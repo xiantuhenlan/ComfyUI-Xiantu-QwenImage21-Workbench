@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { mountVideoPromptOptimizer } from "./xiantu_video_prompt_optimizer.js";
 
 const NODE = "XiantuVideoEditorWorkbench";
 const compactDirectorState = (state) => ({
@@ -207,6 +208,48 @@ const syncSelfLiftCanvasBridges = (graph, workbenchId, enabled,
 };
 const FUNCTION_TAG = "xiantuFunctionTag";
 const FUNCTION_TAG_LABELS = Object.freeze({ speed: "加速", optimization: "性能优化", sampling: "采样 SIGMAS", model: "模型", lora: "LoRA", custom: "自定义" });
+const GROUP_TAGS = "xiantuFunctionGroups";
+const functionGroupKey = (group) => `group:${group.id}`;
+const functionGroupTag = (graph, group) => graph.extra?.[GROUP_TAGS]?.[functionGroupKey(group)];
+const functionGroupMembers = (group) => {
+    group.recomputeInsideNodes();
+    return (group.nodes || group._nodes || []).filter((item) => String(item.comfyClass || item.type) !== NODE);
+};
+const taggedFunctionGroups = (graph) => (graph?._groups || []).filter((group) => functionGroupTag(graph, group));
+const applyFunctionGroupModes = (graph) => {
+    const changes = new Map();
+    for (const group of taggedFunctionGroups(graph)) {
+        const mode = functionGroupTag(graph, group).mode;
+        if (mode !== 0 && mode !== 4) continue;
+        for (const item of functionGroupMembers(group)) {
+            if (changes.get(item) !== 4) changes.set(item, mode);
+        }
+    }
+    let changed = false;
+    for (const [item, mode] of changes) {
+        if (item.mode === mode) continue;
+        item.mode = mode;
+        changed = true;
+    }
+    if (changed) {
+        graph.change?.();
+        graph.setDirtyCanvas?.(true, true);
+    }
+};
+const setFunctionGroupTag = (graph, group, tag) => {
+    graph.beforeChange?.();
+    try {
+        graph.extra ??= {};
+        graph.extra[GROUP_TAGS] ??= {};
+        if (tag) graph.extra[GROUP_TAGS][functionGroupKey(group)] = tag;
+        else delete graph.extra[GROUP_TAGS][functionGroupKey(group)];
+        applyFunctionGroupModes(graph);
+    } finally {
+        graph.afterChange?.();
+        graph.change?.();
+        graph.setDirtyCanvas?.(true, true);
+    }
+};
 const readFunctionTag = (item) => {
     const raw = item?.properties?.[FUNCTION_TAG];
     if (raw && typeof raw === "object") return { category: String(raw.category || "custom"), label: String(raw.label || ""), note: String(raw.note || "") };
@@ -222,7 +265,7 @@ const WORKBENCH_LOGO_URL = new URL("./assets/xiantu-rabbit-logo.png", import.met
 let videoEditorStyleReady = Promise.resolve();
 
 {
-    const styleUrl = new URL("./xiantu_video_editor.css?v=20261101-055", import.meta.url).href;
+    const styleUrl = new URL("./xiantu_video_editor.css?v=20261117-01", import.meta.url).href;
     const link = document.querySelector("link[data-xiantu-video-editor-style]") || document.createElement("link");
     link.rel = "stylesheet";
     link.href = styleUrl;
@@ -260,19 +303,35 @@ const freshSeed = () => {
     }
     return words[0] * 0x200000 + (words[1] & 0x1fffff);
 };
-const workbenchGraphScope = (graph, workbenchId) => {
+const workbenchGraphScope = (graph, workbenchId, includeSetGet = false) => {
     const parents = new Map(), children = new Map();
     const getLink = (id) => graph?.links instanceof Map ? graph.links.get(id) : graph?.links?.[id];
-    for (const item of graph?._nodes || []) {
+    const nodes = graph?._nodes || [];
+    const setters = new Map();
+    const setGetName = (item) => item.widgets?.[0]?.value;
+    if (includeSetGet) {
+        for (const item of nodes) {
+            const name = setGetName(item);
+            if (item.type !== "SetNode" || typeof name !== "string" || !name.trim()) continue;
+            // An ambiguous name must not bring another model branch into scope.
+            setters.set(name, setters.has(name) ? null : item);
+        }
+    }
+    for (const item of nodes) {
         const id = String(item.id);
-        parents.set(id, (item.inputs || []).flatMap((input) => {
+        const origins = (item.inputs || []).flatMap((input) => {
             const link = getLink(input.link);
             if (!link) return [];
-            const origin = String(Array.isArray(link) ? link[1] : link.origin_id);
+            return [String(Array.isArray(link) ? link[1] : link.origin_id)];
+        });
+        const setter = includeSetGet && item.type === "GetNode" ? setters.get(setGetName(item)) : null;
+        const setterLink = setter?.inputs?.[0]?.link;
+        if (setterLink != null && getLink(setterLink)) origins.push(String(setter.id));
+        parents.set(id, origins);
+        for (const origin of origins) {
             if (!children.has(origin)) children.set(origin, []);
             children.get(origin).push(id);
-            return [origin];
-        }));
+        }
     }
     const visit = (starts, edges) => {
         const seen = new Set(), pending = [...starts];
@@ -488,7 +547,72 @@ const SHEET_COLUMNS = [
     ...Array.from({ length: 3 }, (_, index) => `参考视频绝对路径${index + 1}`),
     ...Array.from({ length: 3 }, (_, index) => `参考音频绝对路径${index + 1}`),
     "画面比例", "生成分辨率", "保存文件名",
+    "组标记选择", "分镜ID", "分镜勾选", "各模式提示词", "参考素材配置", "分镜标记配置", "工作流标记配置",
 ];
+// Optional table columns retain metadata while the original editable columns stay compatible.
+const sheetJson = (value, label, fallback) => {
+    if (!String(value || "").trim()) return fallback;
+    try { return JSON.parse(value); }
+    catch { throw new Error(`“${label}”中的配置不是有效 JSON`); }
+};
+const sheetFunctionSnapshot = (graph, settings) => ({
+    version: 1,
+    ...structuredClone(settings),
+    nodes: (graph?._nodes || []).filter((item) => readFunctionTag(item)).map((item) => ({
+        id: String(item.id), type: String(item.comfyClass || item.type), title: String(item.title || ""),
+        tag: structuredClone(item.properties[FUNCTION_TAG]), mode: Number(item.mode || 0),
+        widgets: (item.widgets || []).filter((widget) => widget.name && ["string", "number", "boolean"].includes(typeof widget.value))
+            .map((widget) => ({ name: widget.name, value: widget.value })),
+    })),
+    groups: taggedFunctionGroups(graph).map((group) => ({
+        id: String(group.id), title: String(group.title || ""), tag: structuredClone(functionGroupTag(graph, group)),
+    })),
+});
+const sheetNodeMapping = (graph, config) => {
+    const mapping = new Map();
+    for (const saved of config?.nodes || []) {
+        const matching = (graph?._nodes || []).filter((item) => String(item.comfyClass || item.type) === saved.type);
+        const item = matching.find((item) => String(item.id) === String(saved.id))
+            || matching.filter((item) => String(item.title || "") === saved.title).filter((_, index, list) => list.length === 1)[0];
+        if (item) mapping.set(String(saved.id), String(item.id));
+    }
+    return mapping;
+};
+const sheetRemapSelections = (saved, mapping) => {
+    const result = structuredClone(saved || {});
+    if (result.samplingNodeId) result.samplingNodeId = mapping.get(String(result.samplingNodeId)) || String(result.samplingNodeId);
+    for (const key of ["speedNodeModes", "optimizationNodeModes", "loraNodeModes", "loraGlobalByNode"]) {
+        if (result[key]) result[key] = Object.fromEntries(Object.entries(result[key]).map(([id, value]) => [mapping.get(id) || id, value]));
+    }
+    return result;
+};
+const sheetRestoreFunctionMarks = (graph, config, mapping) => {
+    if (!config) return;
+    for (const saved of config.nodes || []) {
+        const item = (graph?._nodes || []).find((item) => String(item.id) === mapping.get(String(saved.id)));
+        if (!item) continue;
+        item.properties ||= {};
+        item.properties[FUNCTION_TAG] = structuredClone(saved.tag);
+        if ([0, 2, 4].includes(saved.mode)) item.mode = saved.mode;
+        for (const entry of saved.widgets || []) {
+            const widget = item.widgets?.find((widget) => widget.name === entry.name);
+            if (widget) widget.value = entry.value;
+        }
+    }
+    for (const saved of config.groups || []) {
+        const groups = graph?._groups || [];
+        const group = groups.find((item) => String(item.id) === saved.id && String(item.title || "") === saved.title)
+            || groups.filter((item) => String(item.title || "") === saved.title).filter((_, index, list) => list.length === 1)[0];
+        if (group) {
+            graph.extra ||= {};
+            graph.extra[GROUP_TAGS] ||= {};
+            graph.extra[GROUP_TAGS][functionGroupKey(group)] = structuredClone(saved.tag);
+        }
+    }
+    applyFunctionGroupModes(graph);
+    graph?.change?.();
+    graph?.setDirtyCanvas?.(true, true);
+};
 const MODE_LABELS = { text: "文生视频", image: "图生视频", frames: "首尾帧生视频", reference: "全参考生视频" };
 const LABEL_MODES = Object.fromEntries(Object.entries(MODE_LABELS).map(([key, value]) => [value, key]));
 const csvCell = (value) => {
@@ -608,9 +732,7 @@ function createWorkbench(node) {
               </div>
               <div class="xve-shot-toolbar">
                 <div class="xve-optimization-actions">
-                  <button type="button" data-open-placeholder="optimization">速度性能优化</button>
-                  <button type="button" data-sigma-open>采样 SIGMAS</button>
-                  <button type="button" data-lora-open>LoRA</button>
+                  <button type="button" data-open-placeholder>标记功能</button>
                   <button type="button" class="xve-repair-button face" data-face-repair>人脸修复</button>
                 </div>
                 <div class="xve-generate-tools">
@@ -635,6 +757,7 @@ function createWorkbench(node) {
               <div class="xve-prompt-head">
                 <label for="xve-prompt">单个分镜提示词</label>
                 <div class="xve-sheet-actions">
+                  <button type="button" data-xve-opt-open>优化提示词</button>
                   <label class="xve-selflift-compat" data-selflift-compat-label title="当前导演台未连接启用的 SelfLift 二采节点"><input type="checkbox" data-selflift-compat disabled>二采兼容</label>
                   <button type="button" data-download-sheet>⇩ 下载表格</button>
                   <button type="button" data-upload-sheet>↥ 上传表格</button>
@@ -678,34 +801,72 @@ function createWorkbench(node) {
             </div>
           </section>
         </main>
+        <div class="xve-placeholder-backdrop" data-xve-opt-dialog hidden>
+          <section class="xve-placeholder-dialog xve-opt-dialog" role="dialog" aria-modal="true" aria-label="提示词优化">
+            <header><b>提示词优化</b><button type="button" data-xve-opt="close" aria-label="关闭">×</button></header>
+            <main>
+              <div class="xve-opt-settings">
+                <label>本地语言模型<select name="model"></select></label>
+                <label>视觉投影<select name="mmproj"></select></label>
+                <label>提示词语言<select name="output_language"><option value="zh">中文</option><option value="en">英文</option></select></label>
+                <label>技能<select name="skill_id"></select></label>
+              </div>
+              <div class="xve-opt-actions">
+                <button type="button" data-xve-opt="refresh">刷新模型</button>
+                <button type="button" data-xve-opt="install" hidden>安装本地运行时</button>
+                <button type="button" data-xve-opt="download-model" hidden>下载推荐模型</button>
+                <button type="button" data-xve-opt="download-projector" hidden>下载视觉投影</button>
+                <button type="button" data-xve-opt="add-skill">导入技能</button>
+                <button type="button" data-xve-opt="remove-skill">移除技能</button>
+                <input type="file" data-xve-opt-skill-files accept=".md,.txt,.json,.yaml,.yml" multiple hidden>
+              </div>
+              <details>
+                <summary>模型参数</summary>
+                <div class="xve-opt-settings">
+                  <label>上下文长度<input name="context_length" type="number" min="2048" step="1024"></label>
+                  <label>GPU 层数<input name="gpu_layers" type="number" min="-1" step="1"></label>
+                  <label>最大生成 Token<input name="max_tokens" type="number" min="128" step="64"></label>
+                  <label>温度<input name="temperature" type="number" min="0" max="2" step="0.05"></label>
+                </div>
+              </details>
+              <div class="xve-opt-progress">
+                <span data-xve-opt-status role="status">正在检查本地运行时</span>
+                <progress data-xve-opt-progress max="100" value="0"></progress>
+                <small data-xve-opt-source></small>
+              </div>
+              <pre data-xve-opt-original hidden></pre>
+            </main>
+            <footer>
+              <button type="button" data-xve-opt="original" hidden>查看原文</button>
+              <button type="button" data-xve-opt="undo">恢复原文</button>
+              <button type="button" data-xve-opt="stop" hidden>停止</button>
+              <div class="xve-opt-scope" role="group" aria-label="优化范围">
+                <label><input type="radio" name="optimization_scope" value="shot"> 单分镜</label>
+                <label><input type="radio" name="optimization_scope" value="all"> 全局</label>
+              </div>
+              <button type="button" data-xve-opt="confirm" disabled>确认</button>
+            </footer>
+          </section>
+        </div>
         <div class="xve-placeholder-backdrop" data-placeholder-dialog hidden>
           <section class="xve-placeholder-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-placeholder-title">
-            <header><b id="xve-placeholder-title" data-placeholder-title>速度性能优化</b><div class="xve-dialog-header-actions"><label><input type="checkbox" data-speed-optimization-global> 全局</label><button type="button" data-placeholder-close aria-label="关闭">×</button></div></header>
+            <header><b id="xve-placeholder-title" >标记功能</b><div class="xve-dialog-header-actions"><label><input type="checkbox" data-speed-optimization-global> 全局</label><label hidden><input type="checkbox" data-sampling-global> 全局</label><button type="button" data-placeholder-close aria-label="关闭">×</button></div></header>
 	            <main class="xve-function-tag-main">
 	              <nav class="xve-function-tag-filters" data-function-tag-filters>
 	                <button type="button" class="active" data-function-tag-filter="speed">速度</button>
 	                <button type="button" data-function-tag-filter="optimization">性能优化</button>
+	                <button type="button" data-function-tag-filter="sampling">采样 SIGMAS</button>
+                    <button type="button" data-function-tag-filter="lora">LoRA</button>
+                    <button type="button" data-function-tag-filter="groups">工作流组</button>
 	              </nav>
 	              <div class="xve-function-tag-list" data-function-tag-list></div>
-            </main>
-            <footer><button type="button" data-placeholder-close>关闭</button></footer>
-          </section>
-        </div>
-        <div class="xve-sigma-backdrop" data-sigma-dialog hidden>
-          <section class="xve-sigma-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-sigma-dialog-title">
-            <header><b id="xve-sigma-dialog-title">采样 SIGMAS</b><div class="xve-dialog-header-actions"><label><input type="checkbox" data-sampling-global> 全局</label><button type="button" data-sigma-close aria-label="关闭">×</button></div></header>
-            <main class="xve-sigma-main">
+                  <div data-mark-tab="sampling" hidden>
               <section class="xve-sigma-tagged"><div class="xve-shot-config-head"><strong>采样标记节点</strong><span data-sampling-shot-state></span><button type="button" data-sampling-use-default>使用默认</button></div><div class="xve-function-tag-list compact" data-sampling-tag-list></div></section>
               <section class="xve-sampler-pairing"><strong>采样器选择（自动配对）</strong><div class="xve-sampler-pair-list" data-sampler-pair-list></div></section>
+            </div>
+                  <div data-mark-tab="lora" hidden><section><div class="xve-shot-config-head"><strong>LoRA 标记节点</strong><span data-lora-shot-state></span><button type="button" data-lora-use-default>使用默认</button></div><div class="xve-function-tag-list" data-lora-tag-list></div></section></div>
             </main>
-            <footer><button type="button" data-sigma-close>关闭</button></footer>
-          </section>
-        </div>
-        <div class="xve-sigma-backdrop" data-lora-dialog hidden>
-          <section class="xve-sigma-dialog" role="dialog" aria-modal="true" aria-labelledby="xve-lora-dialog-title">
-            <header><b id="xve-lora-dialog-title">LoRA 功能</b><button type="button" data-lora-close aria-label="关闭">×</button></header>
-            <main><section><div class="xve-shot-config-head"><strong>LoRA 标记节点</strong><span data-lora-shot-state></span><button type="button" data-lora-use-default>使用默认</button></div><div class="xve-function-tag-list" data-lora-tag-list></div></section></main>
-            <footer><button type="button" data-lora-close>关闭</button></footer>
+            <footer><button type="button" data-placeholder-close>关闭</button></footer>
           </section>
         </div>
         <div class="xve-asset-backdrop" data-library-dialog hidden>
@@ -1072,9 +1233,9 @@ function createWorkbench(node) {
     });
     const sourceLibraryAsset = (asset) => libraryAssets.find((item) => String(item.id) === String(asset.sourceAssetId || ""));
     const assetNote = (asset) => String(sourceLibraryAsset(asset)?.note ?? asset.note ?? "").trim();
-    const mentionItems = () => {
+    const mentionItems = (shot = activeShot()) => {
         const counters = { image: 0, video: 0, audio: 0 };
-        return effectiveAssetsForShot().map((asset) => {
+        return effectiveAssetsForShot(shot).map((asset) => {
             const kind = asset.type.startsWith("video/") ? "video" : asset.type.startsWith("audio/") ? "audio" : "image";
             counters[kind] += 1;
             const number = counters[kind];
@@ -1667,6 +1828,11 @@ function createWorkbench(node) {
         updatePrompt();
         const { width, height } = resolutionFor();
         const resolutionLabel = `${Number(resolutionState.megapixels).toFixed(1)} MP · ${width} × ${height}`;
+        ensureFunctionSelectionDefaults();
+        const functionConfig = sheetFunctionSnapshot(node.graph || app.graph, {
+            defaults: functionSelectionDefaults, scopes: functionSelectionScopes, samplerPairs: samplingSamplerPairs,
+            resolution: resolutionState, continuityOverlapFrames,
+        });
         const rows = [SHEET_COLUMNS, ...shots.map((shot, index) => {
             const assets = effectiveAssetsForShot(shot);
             const paths = (prefix, count) => {
@@ -1696,6 +1862,16 @@ function createWorkbench(node) {
                 resolutionState.aspect,
                 resolutionLabel,
                 filenamePrefix,
+                functionConfig.groups.map((group) => `${group.title} [${group.id}]=${({ 0: "启用", 4: "忽略" })[group.tag.mode] || "已标记"}`).join("；"),
+                shot.id, shot.selected === false ? "否" : "是",
+                JSON.stringify(shot.prompts || {}),
+                JSON.stringify(assets.map(({ id, type, sourcePath, serverName, subfolder, sourceType, name, alias, note, global, width, height, duration }) =>
+                    ({ id, type, sourcePath, serverName, subfolder, sourceType, name, alias, note, global, width, height, duration }))),
+                JSON.stringify({ selections: shot.functionSelections || {}, display: {
+                    speed: selectionTextForShot(shot, "speed"), optimization: selectionTextForShot(shot, "optimization"),
+                    sampling: samplingSelectionText(shot), lora: loraSelectionText(shot),
+                } }),
+                index === 0 ? JSON.stringify(functionConfig) : "",
             ];
         })];
         downloadCsv(`闲兔视频导演台_${new Date().toISOString().slice(0, 10)}.csv`, rows);
@@ -1713,6 +1889,16 @@ function createWorkbench(node) {
     const importSheet = async (file) => {
         const button = q("[data-upload-sheet]");
         if (!file) return;
+        const previousSheetState = {
+            resolution: structuredClone(resolutionState), filenamePrefix, continuityOverlapFrames,
+            defaults: structuredClone(functionSelectionDefaults), scopes: structuredClone(functionSelectionScopes),
+            samplerPairs: structuredClone(samplingSamplerPairs),
+            nodes: (node.graph || app.graph)?._nodes?.map((item) => ({
+                item, mode: item.mode, tag: structuredClone(item.properties?.[FUNCTION_TAG]),
+                widgets: (item.widgets || []).map((widget) => [widget, widget.value]),
+            })) || [],
+            groups: structuredClone((node.graph || app.graph)?.extra?.[GROUP_TAGS]),
+        };
         try {
             const rows = await readSheetRows(file);
             if (rows.length < 2) throw new Error("表格没有分镜数据");
@@ -1737,6 +1923,22 @@ function createWorkbench(node) {
             const dataRows = rows.slice(1).filter((row) => row.some((value) => String(value).trim()));
             if (!dataRows.length) throw new Error("表格没有可导入的分镜行");
             const first = dataRows[0];
+            const rawValueAt = (row, ...names) => column(...names) < 0 ? "" : String(row[column(...names)] ?? "");
+            const functionConfig = sheetJson(valueAt(first, "工作流标记配置"), "工作流标记配置", null);
+            const groupSelectionText = valueAt(first, "组标记选择");
+            for (const group of functionConfig?.groups || []) {
+                const entry = groupSelectionText.split(/[；;]/).find((entry) => entry.includes(`[${group.id}]=`));
+                const mode = entry?.match(/=\s*(启用|忽略)\s*$/)?.[1];
+                if (mode) group.tag.mode = ({ "启用": 0, "忽略": 4 })[mode];
+            }
+            const functionMapping = sheetNodeMapping(node.graph || app.graph, functionConfig);
+            sheetRestoreFunctionMarks(node.graph || app.graph, functionConfig, functionMapping);
+            if (functionConfig?.resolution) Object.assign(resolutionState, functionConfig.resolution);
+            if (functionConfig?.defaults) functionSelectionDefaults = sheetRemapSelections(functionConfig.defaults, functionMapping);
+            if (functionConfig?.scopes) functionSelectionScopes = sheetRemapSelections(functionConfig.scopes, functionMapping);
+            if (functionConfig?.samplerPairs) samplingSamplerPairs = Object.fromEntries(Object.entries(functionConfig.samplerPairs)
+                .map(([id, paired]) => [functionMapping.get(id) || id, functionMapping.get(String(paired)) || String(paired)]));
+            if (functionConfig?.continuityOverlapFrames) continuityOverlapFrames = snapContinuityFrames(functionConfig.continuityOverlapFrames);
             const aspect = valueAt(first, "画面比例", "宽高比").split(/[（ (]/)[0];
             if (resolutionRatios[aspect]) resolutionState.aspect = aspect;
             const resolutionText = valueAt(first, "生成分辨率", "分辨率");
@@ -1777,15 +1979,33 @@ function createWorkbench(node) {
             const importedShots = [];
             const importedAssets = [];
             const mediaCache = new Map();
-            const makeAssetFromPath = async (path, expectedType, shotId, rowNumber, label) => {
+            const globalMediaIds = new Set();
+            const makeAssetFromPath = async (path, expectedType, shotId, rowNumber, label, metadata = {}) => {
                 const cleanPath = String(path || "").trim().replace(/^"|"$/g, "");
-                if (!cleanPath) return;
-                if (!isAbsolutePath(cleanPath)) throw new Error(`第 ${rowNumber} 行“${label}”必须填写绝对路径`);
-                const key = cleanPath.toLowerCase();
-                if (!mediaCache.has(key)) mediaCache.set(key, await importLocalMedia(cleanPath));
+                if (!cleanPath && metadata.sourcePath) return;
+                if (!cleanPath && !metadata.serverName) return;
+                if (cleanPath && !isAbsolutePath(cleanPath)) throw new Error(`第 ${rowNumber} 行“${label}”必须填写绝对路径`);
+                const key = cleanPath ? cleanPath.toLowerCase() : persistedAssetUrl(metadata);
+                if (!mediaCache.has(key)) {
+                    if (cleanPath) mediaCache.set(key, await importLocalMedia(cleanPath));
+                    else {
+                        const response = await api.fetchApi(key);
+                        if (!response.ok) throw new Error(`第 ${rowNumber} 行“${label}”的已上传素材不存在`);
+                        mediaCache.set(key, { name: metadata.serverName, subfolder: metadata.subfolder || "", type: metadata.sourceType || "input", mimeType: metadata.type });
+                    }
+                }
                 const imported = mediaCache.get(key);
                 if (!imported.mimeType.startsWith(`${expectedType}/`)) throw new Error(`第 ${rowNumber} 行“${label}”文件类型不正确`);
                 const asset = { id: makeId(), shotId, name: imported.displayName || imported.name, sourcePath: imported.sourcePath || cleanPath, serverName: imported.name, subfolder: imported.subfolder || "", sourceType: imported.type || "input", type: imported.mimeType, url: persistedAssetUrl({ serverName: imported.name, subfolder: imported.subfolder, sourceType: imported.type }), duration: 0, width: 0, height: 0 };
+                for (const key of ["name", "alias", "note", "width", "height", "duration"]) {
+                    if (metadata[key] !== undefined) asset[key] = metadata[key];
+                }
+                asset.global = metadata.global === true;
+                if (asset.global) {
+                    const globalId = metadata.id || JSON.stringify([asset.sourcePath, asset.alias, asset.note]);
+                    if (globalMediaIds.has(globalId)) return;
+                    globalMediaIds.add(globalId);
+                }
                 importedAssets.push(asset);
                 if (asset.type.startsWith("image/")) {
                     const probe = new Image();
@@ -1805,30 +2025,44 @@ function createWorkbench(node) {
                 const modeLabel = valueAt(row, "生成类型（全参考生视频）", "生成类型") || MODE_LABELS.reference;
                 const mode = LABEL_MODES[modeLabel];
                 if (!mode) throw new Error(`第 ${rowNumber} 行生成类型“${modeLabel}”无效`);
-                const shotId = makeId();
+                const shotId = valueAt(row, "分镜ID") || makeId();
+                if (importedShots.some((shot) => shot.id === shotId)) throw new Error(`第 ${rowNumber} 行分镜ID重复`);
+                const prompt = rawValueAt(row, "提示词", "分镜提示词");
+                const prompts = sheetJson(valueAt(row, "各模式提示词"), `第 ${rowNumber} 行各模式提示词`, {});
+                prompts[mode] = prompt;
+                const marks = sheetJson(valueAt(row, "分镜标记配置"), `第 ${rowNumber} 行分镜标记配置`, null);
                 const seconds = Math.max(1, Number(valueAt(row, "秒数", "时长", "时长（秒）")) || 5);
                 const yes = ["是", "true", "1", "yes", "继承", "承接"].includes(valueAt(row, "是否承接上一分镜", "是否继承上一帧", "是否继承", "继承上一帧").toLowerCase());
-                const shot = ensureModePrompts({ id: shotId, sheetNumber, title: valueAt(row, "分镜名称", "分镜名", "镜头名") || `分镜 ${sheetNumber}`, selected: true, prompt: valueAt(row, "提示词", "分镜提示词"), mode, seconds, inheritPrevious: index > 0 && yes, referenceSize: valueAt(row, "参考图尺寸", "图片参数（MAX）", "图片参数").toUpperCase() === "MAX" ? "max" : "match" });
+                const shot = ensureModePrompts({ id: shotId, sheetNumber, title: valueAt(row, "分镜名称", "分镜名", "镜头名") || `分镜 ${sheetNumber}`, selected: !["否", "false", "0", "no"].includes(valueAt(row, "分镜勾选").toLowerCase()), prompt, prompts, functionSelections: sheetRemapSelections(marks?.selections, functionMapping), mode, seconds, inheritPrevious: index > 0 && yes, referenceSize: valueAt(row, "参考图尺寸", "图片参数（MAX）", "图片参数").toUpperCase() === "MAX" ? "max" : "match" });
                 const samplingNodeId = parseSamplingSelection(valueAt(row, "采样 SIGMAS 选择", "采样SIGMAS选择", "采样选择"));
                 const samplerPairName = valueAt(row, "采样器（自动匹配）", "采样器", "搭配采样器").toLowerCase();
                 const importedSamplerPair = samplerChoiceNodes().find((item) => samplerNameOf(item) === samplerPairName);
                 if (samplingNodeId && importedSamplerPair) samplingSamplerPairs[samplingNodeId] = functionNodeId(importedSamplerPair);
-                if (!functionSelectionScopes.samplingGlobal && samplingNodeId) shot.functionSelections.samplingNodeId = samplingNodeId;
+                if (!functionSelectionScopes.samplingGlobal && samplingNodeId && (!marks || valueAt(row, "采样 SIGMAS 选择", "采样SIGMAS选择", "采样选择") !== marks.display?.sampling)) shot.functionSelections.samplingNodeId = samplingNodeId;
                 if (!functionSelectionScopes.speedOptimizationGlobal) {
                     const speedModes = parseNodeModeSelection(valueAt(row, "速度选择", "全局速度选择"), "speed");
                     const optimizationModes = parseNodeModeSelection(valueAt(row, "性能优化选择", "全局性能优化选择"), "optimization");
-                    if (speedModes) shot.functionSelections.speedNodeModes = speedModes;
-                    if (optimizationModes) shot.functionSelections.optimizationNodeModes = optimizationModes;
+                    if (speedModes && (!marks || valueAt(row, "速度选择", "全局速度选择") !== marks.display?.speed)) shot.functionSelections.speedNodeModes = speedModes;
+                    if (optimizationModes && (!marks || valueAt(row, "性能优化选择", "全局性能优化选择") !== marks.display?.optimization)) shot.functionSelections.optimizationNodeModes = optimizationModes;
                 }
                 const loraNodeModes = parseNodeModeSelection(valueAt(row, "LoRA 选择", "LORA选择", "LoRA选择"), "lora");
-                if (loraNodeModes) {
+                if (loraNodeModes && (!marks || valueAt(row, "LoRA 选择", "LORA选择", "LoRA选择") !== marks.display?.lora)) {
                     const localLoraModes = Object.fromEntries(Object.entries(loraNodeModes).filter(([id]) => !functionSelectionScopes.loraGlobalByNode[id]));
                     if (Object.keys(localLoraModes).length) shot.functionSelections.loraNodeModes = localLoraModes;
                 }
                 importedShots.push(shot);
-                for (let ref = 1; ref <= 9; ref += 1) await makeAssetFromPath(valueAt(row, `参考图片绝对路径${ref}`, `参考图绝对地址${ref}`), "image", shotId, rowNumber, `参考图片绝对路径${ref}`);
-                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考视频绝对路径${ref}`, `参考视频${ref}`), "video", shotId, rowNumber, `参考视频绝对路径${ref}`);
-                for (let ref = 1; ref <= 3; ref += 1) await makeAssetFromPath(valueAt(row, `参考音频绝对路径${ref}`, `参考音频${ref}`), "audio", shotId, rowNumber, `参考音频绝对路径${ref}`);
+                const mediaMetadata = sheetJson(valueAt(row, "参考素材配置"), `第 ${rowNumber} 行参考素材配置`, []);
+                for (const [kind, count, names] of [
+                    ["image", 9, (ref) => [`参考图片绝对路径${ref}`, `参考图绝对地址${ref}`]],
+                    ["video", 3, (ref) => [`参考视频绝对路径${ref}`, `参考视频${ref}`]],
+                    ["audio", 3, (ref) => [`参考音频绝对路径${ref}`, `参考音频${ref}`]],
+                ]) {
+                    const metadata = mediaMetadata.filter((asset) => String(asset.type || "").startsWith(`${kind}/`));
+                    for (let ref = 1; ref <= Math.max(count, metadata.length); ref += 1) {
+                        const path = ref <= count ? valueAt(row, ...names(ref)) : metadata[ref - 1]?.sourcePath;
+                        await makeAssetFromPath(path, kind, shotId, rowNumber, names(ref)[0], metadata[ref - 1]);
+                    }
+                }
             }
             assetList.forEach((asset) => URL.revokeObjectURL(asset.url));
             assetList.splice(0, assetList.length, ...importedAssets);
@@ -1842,6 +2076,23 @@ function createWorkbench(node) {
             renderShots(); loadShot(); renderTimeline(); save();
             sheetButtonStatus(button, `已导入 ${shots.length} 条`);
         } catch (error) {
+            Object.assign(resolutionState, previousSheetState.resolution);
+            filenamePrefix = previousSheetState.filenamePrefix;
+            continuityOverlapFrames = previousSheetState.continuityOverlapFrames;
+            functionSelectionDefaults = previousSheetState.defaults;
+            functionSelectionScopes = previousSheetState.scopes;
+            samplingSamplerPairs = previousSheetState.samplerPairs;
+            for (const { item, mode, tag, widgets } of previousSheetState.nodes) {
+                item.mode = mode;
+                if (tag === undefined) { if (item.properties) delete item.properties[FUNCTION_TAG]; }
+                else { item.properties ||= {}; item.properties[FUNCTION_TAG] = tag; }
+                for (const [widget, value] of widgets) widget.value = value;
+            }
+            const graph = node.graph || app.graph;
+            if (previousSheetState.groups === undefined) { if (graph?.extra) delete graph.extra[GROUP_TAGS]; }
+            else { graph.extra ||= {}; graph.extra[GROUP_TAGS] = previousSheetState.groups; }
+            graph?.change?.();
+            graph?.setDirtyCanvas?.(true, true);
             console.error("视频导演台表格导入失败", error);
             sheetButtonStatus(button, String(error?.message || error), true);
         }
@@ -2116,8 +2367,8 @@ function createWorkbench(node) {
                 activeShotId = shot.id;
                 timelinePlayheadSeconds = item.start + localSeconds;
                 renderShots(); loadShot(); syncEditToolbar(); save();
-                let resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
-                if (resultIndex < 0) resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
+                let resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
+                if (resultIndex < 0) resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
                 q("[data-playhead]").style.left = `${timelinePlayheadSeconds * timelineScale}px`;
                 if (resultIndex >= 0) playResult(resultIndex, sourceSeconds);
             };
@@ -2365,8 +2616,8 @@ function createWorkbench(node) {
                 activeEditSelection = { kind: "video", id: segment.id };
                 activeShotId = shot.id;
                 renderShots(); loadShot(); syncEditToolbar(); save();
-                let resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
-                if (resultIndex < 0) resultIndex = results.findIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
+                let resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
+                if (resultIndex < 0) resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
                 if (resultIndex >= 0) playResult(resultIndex, editSegmentBounds(segment).sourceStart + Math.max(0, timelineSeconds - start));
         }
     };
@@ -2471,7 +2722,7 @@ function createWorkbench(node) {
             current.subfolder = payload.subfolder || current.subfolder;
             current.type = payload.type || current.type;
             current.name = payload.filename;
-            current.url = api.apiURL(`/view?${new URLSearchParams({ filename: current.filename, subfolder: current.subfolder || "", type: current.type || "output" }).toString()}`);
+            current.url = finalizedRecordUrl(current);
             const shot = shots.find((item) => String(item.id) === String(current.shotId));
             if (shot?.lastOutput?.filename === oldFilename) shot.lastOutput = { ...shot.lastOutput, filename: current.filename, subfolder: current.subfolder, type: current.type };
             if (shot?.successfulOutput?.filename === oldFilename && String(shot.successfulOutput.subfolder || "") === String(payload.subfolder || current.subfolder || "")) {
@@ -2576,7 +2827,7 @@ function createWorkbench(node) {
     const closePlaceholderDialog = () => { placeholderDialog.hidden = true; };
     let activeFunctionTagFilter = "speed";
     const functionTaggedNodes = (category) => {
-        const graph = node.graph || app.graph, scope = workbenchGraphScope(graph, node.id).ids;
+        const graph = node.graph || app.graph, scope = workbenchGraphScope(graph, node.id, true).ids;
         return (graph?._nodes || []).filter((item) => item !== node && scope.has(String(item.id))
             && readFunctionTag(item)?.category === category);
     };
@@ -2731,7 +2982,7 @@ function createWorkbench(node) {
     };
     const samplerChoiceNodes = () => {
         const graph = node.graph || app.graph;
-        const scope = workbenchGraphScope(graph, node.id).ids;
+        const scope = workbenchGraphScope(graph, node.id, true).ids;
         const all = (graph?._nodes || []).filter((item) => item !== node
             && scope.has(String(item.id))
             && samplerNameOf(item)
@@ -2810,6 +3061,7 @@ function createWorkbench(node) {
 	                commitNodeMode(item, normalizedNodeMode(modes[id], normalizedNodeMode(defaults[key]?.[id], normalizedNodeMode(item.mode))));
 	            }
 	        }
+        applyFunctionGroupModes(node.graph || app.graph);
     };
     const rememberShotSamplingSelection = (shot) => {
         if (!shot) return;
@@ -3015,7 +3267,17 @@ function createWorkbench(node) {
             });
             list.appendChild(row);
         }
-        if (!tagged.length) {
+        const active = new Set(tagged);
+        const graph = node.graph || app.graph;
+        const outside = (graph?._nodes || []).filter((item) => item !== node
+            && !active.has(item) && readFunctionTag(item)?.category === category);
+        for (const item of outside) {
+            const row = document.createElement("article");
+            row.className = "xve-function-tag-row";
+            row.innerHTML = `<div><b>${escapeHtml(item.title || item.type || "未命名节点")}</b><span>未接入当前执行链 · #${escapeHtml(functionNodeId(item))}</span></div>`;
+            list.appendChild(row);
+        }
+        if (!tagged.length && !outside.length) {
             const empty = document.createElement("div");
             empty.className = "xve-function-tag-empty";
             empty.textContent = `暂无“${FUNCTION_TAG_LABELS[category]}”标记节点，请在节点右键菜单中添加闲兔功能标记。`;
@@ -3024,7 +3286,53 @@ function createWorkbench(node) {
     };
 	    const renderFunctionTaggedNodes = () => {
 	        root.querySelectorAll("[data-function-tag-filter]").forEach((button) => button.classList.toggle("active", button.dataset.functionTagFilter === activeFunctionTagFilter));
-        fillFunctionTaggedNodeList(q("[data-function-tag-list]"), activeFunctionTagFilter);
+        const list = q("[data-function-tag-list]");
+        const isGroupList = activeFunctionTagFilter === "groups";
+        const specialized = ["sampling", "lora"].includes(activeFunctionTagFilter);
+        list.hidden = specialized;
+        root.querySelectorAll("[data-mark-tab]").forEach((panel) => {
+            panel.hidden = panel.dataset.markTab !== activeFunctionTagFilter;
+        });
+        q("[data-speed-optimization-global]").parentElement.hidden = !["speed", "optimization"].includes(activeFunctionTagFilter);
+        q("[data-sampling-global]").parentElement.hidden = activeFunctionTagFilter !== "sampling";
+        if (specialized) {
+            if (activeFunctionTagFilter === "sampling") renderSamplingTaggedNodes();
+            else renderLoraTaggedNodes();
+            return;
+        }
+        if (isGroupList) {
+            const graph = node.graph || app.graph;
+            const groups = taggedFunctionGroups(graph);
+            list.replaceChildren();
+            for (const group of groups) {
+                const members = functionGroupMembers(group);
+                const row = document.createElement("article");
+                row.className = "xve-function-tag-row xve-function-group-row";
+                const modeLabels = { 0: "已启用", 2: "已关闭", 4: "已忽略" };
+                const modes = new Set(members.map((item) => Number(item.mode || 0)));
+                const state = !members.length ? "空组" : modes.size === 1 ? modeLabels[modes.values().next().value] || "自定义状态" : "混合状态";
+                row.innerHTML = `<div><b title="${escapeHtml(group.title)}">${escapeHtml(group.title || "未命名组")}</b><span>组 · ${members.length} 个节点 · ${state}</span></div><div></div><div class="xve-function-tag-modes"><button type="button" data-group-mode="0">启用</button><button type="button" data-group-mode="4">忽略</button></div>`;
+                for (const button of row.querySelectorAll("[data-group-mode]")) {
+                    const mode = Number(button.dataset.groupMode);
+                    button.classList.toggle("active", modes.size === 1 && modes.has(mode));
+                    button.disabled = !members.length || runtime.busy;
+                    button.onclick = () => {
+                        if (runtime.busy) return;
+                        setFunctionGroupTag(graph, group, { mode });
+                        renderFunctionTaggedNodes();
+                    };
+                }
+                list.appendChild(row);
+            }
+            if (!groups.length) {
+                const empty = document.createElement("div");
+                empty.className = "xve-function-tag-empty";
+                empty.textContent = "暂无标记组。右键画布上的组标题，选择「闲兔功能标记：标记此组」。";
+                list.appendChild(empty);
+            }
+        } else {
+            fillFunctionTaggedNodeList(list, activeFunctionTagFilter);
+        }
         renderShotFunctionSelectionStatus();
     };
     const renderSamplingTaggedNodes = () => {
@@ -3037,8 +3345,6 @@ function createWorkbench(node) {
         renderShotFunctionSelectionStatus();
     };
 	    const openPlaceholderDialog = () => {
-	        const title = "速度性能优化";
-	        q("[data-placeholder-title]").textContent = title;
 	        applyShotFunctionSelections(activeShot());
 	        renderFunctionTaggedNodes();
         placeholderDialog.hidden = false;
@@ -3065,6 +3371,10 @@ function createWorkbench(node) {
     });
     root.querySelectorAll("[data-placeholder-close]").forEach((button) => { button.onclick = closePlaceholderDialog; });
     placeholderDialog.onclick = (event) => { if (event.target === placeholderDialog) closePlaceholderDialog(); };
+    const refreshMarkedNodes = (event) => {
+        if (!placeholderDialog.hidden && event.detail === (node.graph || app.graph)) renderFunctionTaggedNodes();
+    };
+    window.addEventListener("xiantu-function-tags-changed", refreshMarkedNodes);
     const sheetFileInput = q("[data-sheet-file]");
     q("[data-download-sheet]").onclick = downloadSheet;
     q("[data-upload-sheet]").onclick = () => sheetFileInput.click();
@@ -3123,6 +3433,59 @@ function createWorkbench(node) {
         await importSheet(file);
     };
     const promptEditor = q("[data-prompt]");
+    const annotatedFile = (filename, subfolder, type) => filename
+        ? `${[String(subfolder || "").replaceAll("\\", "/"), filename].filter(Boolean).join("/")} [${type || "input"}]`
+        : "";
+    const promptOptimizer = mountVideoPromptOptimizer({
+        root, node, activeShot, getShots: () => shots,
+        isGenerating: () => runtime.busy || runtime.externalBusy,
+        getShotContext: (shot) => {
+            const mode = { text: "T2VA", image: "I2VA", frames: "FL2VA", reference: "REF2VA" }[shot.mode];
+            const duration = Number(shot.seconds) || 5;
+            const previous = shots[shots.indexOf(shot) - 1];
+            const inherited = Boolean(shot.inheritPrevious && previous);
+            const output = inherited && (previous.successfulOutput || previous.lastOutput);
+            const continuation_evidence = output?.filename ? {
+                file: annotatedFile(output.filename, output.subfolder, output.type || "output"),
+                kind: "video", tail_only: true, role: "上一分镜的末帧，用于承接人物、场景和动作",
+            } : null;
+            const items = mentionItems(shot);
+            const pictureCount = shot.mode === "image" ? 1 : shot.mode === "frames" ? (inherited ? 1 : 2) : 0;
+            const materials = shot.mode === "reference" ? items : items.filter((item) => item.kind === "image").slice(0, pictureCount);
+            const payloadMaterials = materials.map(({ asset, kind, label, tag }) => {
+                const tail = shot.mode === "frames" && inherited;
+                const slot = shot.mode === "reference" ? { image: "参考图片", video: "参考视频", audio: "参考音频" }[kind]
+                    : tail || tag === "<Picture 2>" ? "尾帧" : "首帧";
+                return {
+                    file: annotatedFile(asset.serverName, asset.subfolder, asset.sourceType),
+                    alias: label, kind, h3_media_tag: tail ? "<Picture 2>" : tag,
+                    role: assetNote(asset) || label, slot_role: slot,
+                };
+            });
+            if (inherited && (shot.mode === "frames" || (shot.mode === "image" && !payloadMaterials.length))) {
+                payloadMaterials.unshift({ kind: "image", h3_media_tag: "<Picture 1>", role: "上一分镜末帧", slot_role: "首帧" });
+            }
+            return {
+                mode, duration, materials: payloadMaterials, continuation_evidence,
+                seed: Number(shot.lastSeed) || 1,
+                director_context: {
+                    mode, duration_seconds: duration, aspect_ratio: resolutionState.aspect,
+                    resolution: resolutionFor(), video_fps: resolutionState.fps,
+                    continuation: { inherit_previous: inherited, source_shot_name: previous?.title || "", source_prompt: inherited ? String(previous.prompt || "").slice(0, 12000) : "" },
+                },
+            };
+        },
+        writePrompt: (shot, prompt) => {
+            ensureModePrompts(shot);
+            shot.prompt = shot.prompts[shot.mode] = prompt;
+            if (shot === activeShot()) {
+                renderPromptContent(prompt);
+                renderResolutionSettings();
+            }
+            renderTimeline();
+            save();
+        },
+    });
     promptEditor.onpaste = (event) => {
         event.preventDefault();
         const pastedText = event.clipboardData?.getData("text/plain") || "";
@@ -3193,14 +3556,6 @@ function createWorkbench(node) {
             save();
         };
     });
-    const sigmaDialog = q("[data-sigma-dialog]");
-    const closeSigmaDialog = () => { sigmaDialog.hidden = true; };
-    q("[data-sigma-open]").onclick = () => {
-        applyShotFunctionSelections(activeShot());
-        renderSamplingTaggedNodes();
-        sigmaDialog.hidden = false;
-        q("[data-sigma-close]")?.focus();
-    };
     q("[data-sampling-global]").onchange = (event) => {
         functionSelectionScopes.samplingGlobal = Boolean(event.target.checked);
         if (functionSelectionScopes.samplingGlobal) {
@@ -3221,11 +3576,6 @@ function createWorkbench(node) {
         renderSamplingTaggedNodes();
         save();
     };
-    root.querySelectorAll("[data-sigma-close]").forEach((button) => { button.onclick = closeSigmaDialog; });
-    sigmaDialog.onclick = (event) => { if (event.target === sigmaDialog) closeSigmaDialog(); };
-    const loraDialog = q("[data-lora-dialog]");
-    const closeLoraDialog = () => { loraDialog.hidden = true; };
-    q("[data-lora-open]").onclick = () => { applyShotFunctionSelections(activeShot()); renderLoraTaggedNodes(); loraDialog.hidden = false; q("[data-lora-close]")?.focus(); };
     q("[data-lora-use-default]").onclick = () => {
         const shot = activeShot();
         if (!shot) return;
@@ -3235,8 +3585,6 @@ function createWorkbench(node) {
         renderLoraTaggedNodes();
         save();
     };
-    root.querySelectorAll("[data-lora-close]").forEach((button) => { button.onclick = closeLoraDialog; });
-    loraDialog.onclick = (event) => { if (event.target === loraDialog) closeLoraDialog(); };
     root.querySelectorAll("[data-mode]").forEach((button) => button.onclick = () => {
         const shot = activeShot();
         if (!shot || shot.mode === button.dataset.mode) return;
@@ -3453,11 +3801,11 @@ function createWorkbench(node) {
         execution_success: async (event) => {
             const detail = event?.detail || {};
             const promptId = String(detail.prompt_id ?? detail.promptId ?? "");
-            if (promptId) {
+            const shot = promptId ? shots.find((item) => String(item.lastPromptId || "") === promptId) : null;
+            if (shot) {
                 try {
                     const history = await fetchSettledPromptHistory(promptId, detail, 60);
-                    const shot = shots.find((item) => String(item.lastPromptId || "") === promptId) || activeShot();
-                    if (shot) await ingestHistoryVideos(history, shot, { showPreview: true });
+                    if (String(shot.lastPromptId || "") === promptId) await ingestHistoryVideos(history, shot, { showPreview: true });
                 } catch (error) {
                     console.warn("生成完成后同步视频列表失败", error);
                 }
@@ -3592,11 +3940,11 @@ function createWorkbench(node) {
             Object.values(value).forEach(visit);
         };
         const promptNodes = history?.prompt?.[2];
-        if (promptNodes?.[String(node.id)] && history.outputs) {
+        if (String(promptNodes?.[String(node.id)]?.class_type || "") === NODE && history.outputs) {
             for (const [id, output] of Object.entries(history.outputs)) {
                 if (historyNodeBelongsToWorkbench(promptNodes, id)) visit(output);
             }
-        } else visit(history?.outputs || history);
+        }
         const unique = new Map();
         candidates.forEach((item) => unique.set(`${item.type}/${item.subfolder}/${item.filename}`, item));
         return [...unique.values()];
@@ -3734,16 +4082,20 @@ function createWorkbench(node) {
         const stageOutputs = new Map([...rankedOutputs].map(([kind, value]) => [kind, value.output]));
         if (!stageOutputs.size) return { historyVideos, stageOutputs };
         const { width, height } = resolutionFor();
+        const generationPromptId = String(history?.prompt?.[1] || shot.lastPromptId || "");
         let preferred = null;
         for (const [kind, output] of stageOutputs) {
             const outputUrl = api.apiURL(`/view?${new URLSearchParams({ filename: output.filename, subfolder: output.subfolder || "", type: output.type || "output", t: String(Date.now()) }).toString()}`);
             const metadataDuration = Number(output.duration || 0);
             const metadataWidth = Number(output.width || 0);
             const metadataHeight = Number(output.height || 0);
-            const resultIndex = results.findIndex((item) => String(item.shotId) === String(shot.id) && resultKind(item) === kind);
+            const resultIndex = results.findIndex((item) => String(item.shotId) === String(shot.id) && resultKind(item) === kind
+                && (generationPromptId ? String(item.generationPromptId || "") === generationPromptId
+                    || (!item.generationPromptId && sameOutputLocation(item, output)) : sameOutputLocation(item, output)));
             const previousResult = resultIndex >= 0 ? results[resultIndex] : null;
             const result = {
                 shotId: shot.id,
+                generationPromptId,
                 name: output.filename,
                 filename: output.filename,
                 subfolder: output.subfolder || "",
@@ -3798,7 +4150,7 @@ function createWorkbench(node) {
                 if (finalized.filename !== result.filename || finalized.subfolder !== result.subfolder || finalized.type !== result.type) changed = true;
                 Object.assign(result, finalized, { name: finalized.filename });
                 if (oldFilename !== finalized.filename) repairFinalizedVideoElements(oldFilename, finalized.filename);
-                result.url = api.apiURL(`/view?${new URLSearchParams({ filename: result.filename, subfolder: result.subfolder || "", type: result.type || "output" }).toString()}`);
+                result.url = finalizedRecordUrl(result);
                 const shot = shots.find((item) => String(item.id) === String(result.shotId));
                 if (shot?.lastOutput?.filename === oldFilename) shot.lastOutput = { ...shot.lastOutput, filename: result.filename, subfolder: result.subfolder, type: result.type };
                 if (shot?.successfulOutput?.filename === oldFilename && String(shot.successfulOutput.subfolder || "") === String(result.subfolder || "")) {
@@ -3829,16 +4181,11 @@ function createWorkbench(node) {
     };
     const recoverPreviousShotOutput = async (shot) => {
         if (!shot) return null;
-        // A later failed attempt can already have written the stable filename.
-        // Its file must not be mistaken for the earlier committed generation.
-        if (["error", "stopped"].includes(String(shot.status || "")) && shot.successfulLatentCache?.promptId
-            && shot.lastPromptId && String(shot.lastPromptId) !== String(shot.successfulLatentCache.promptId)) return null;
         if (shot.successfulOutput?.filename && await outputRecordExists(shot.successfulOutput)) {
             shot.lastOutput = { ...shot.successfulOutput };
             return shot.lastOutput;
         }
-        if (["error", "stopped", "queued", "running"].includes(String(shot.status || ""))) return null;
-        const storedResults = results.filter((item) => String(item.shotId) === String(shot.id) && item?.filename);
+        const storedResults = results.filter((item) => String(item.shotId) === String(shot.id) && item?.filename).reverse();
         const preferredStored = [
             ...storedResults.filter((item) => resultKind(item) === "after"),
             ...storedResults.filter((item) => resultKind(item) === "before"),
@@ -3854,6 +4201,8 @@ function createWorkbench(node) {
                 subfolder: stored.subfolder || "",
                 type: stored.type || "output",
             };
+            shot.successfulOutput = { ...shot.lastOutput };
+            shot.successfulLatentCache = null;
             shot.status = "done";
             save();
             return shot.lastOutput;
@@ -3870,6 +4219,8 @@ function createWorkbench(node) {
                 };
                 if (await outputRecordExists(candidate)) {
                     shot.lastOutput = candidate;
+                    shot.successfulOutput = { ...candidate };
+                    shot.successfulLatentCache = null;
                     shot.status = "done";
                     save();
                     return shot.lastOutput;
@@ -3888,9 +4239,40 @@ function createWorkbench(node) {
             }
         }
         if (shot.lastOutput?.filename && await outputRecordExists(shot.lastOutput)) {
+            shot.successfulOutput = { ...shot.lastOutput };
+            shot.successfulLatentCache = null;
             shot.status = "done";
             save();
             return shot.lastOutput;
+        }
+        try {
+            const response = await api.fetchApi("/xiantu/video-editor/recover-saved-output", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ workbench_id: String(node.id), shot_id: String(shot.id) }),
+            });
+            const payload = await response.json();
+            const output = payload.output;
+            if (!response.ok || !output?.filename) return null;
+            shot.lastOutput = { ...output };
+            shot.successfulOutput = { ...output };
+            shot.successfulLatentCache = null;
+            shot.status = "done";
+            const resultIndex = results.findIndex((item) => sameOutputLocation(item, output));
+            const result = {
+                ...(resultIndex >= 0 ? results[resultIndex] : {}),
+                ...output,
+                name: output.filename,
+                url: finalizedRecordUrl(output),
+                actualDuration: output.duration,
+                resolution: `${output.width}×${output.height}`,
+            };
+            if (resultIndex >= 0) results[resultIndex] = result; else results.push(result);
+            renderResults();
+            save();
+            return shot.lastOutput;
+        } catch (error) {
+            console.warn(`恢复上一分镜“${shot.title || "未命名"}”的已有视频失败`, error);
         }
         return null;
     };
@@ -3941,6 +4323,7 @@ function createWorkbench(node) {
                     // Every inherited shot reads the same saved AV source.
                     // Cache availability must never select a different path.
                     cache_key: "",
+                    target_latent: [workbenchId, 1],
                     previous_output: (previousShot.lastOutput || previousShot.successfulOutput)?.filename
                         ? JSON.stringify(previousShot.lastOutput || previousShot.successfulOutput) : "",
                     overlap_frames: Number(shot.contextTrimFrames || continuityOverlapFrames),
@@ -4523,7 +4906,6 @@ function createWorkbench(node) {
                 });
                 setGenerationProgress({ title: "提交工作流完成", actionDetail: "ComfyUI 已接收", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(8), phase: "prepare", phasePercent: 100, traceKey: `internal:${index}:submitted` });
                 const history = await historyPromise;
-                if (runtime.cancelRequested) throw new Error("用户停止生成");
                 shot.lastPromptId = String(response.prompt_id);
                 setGenerationProgress({ title: "读取生成结果", actionDetail: "解析本次任务输出", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(99), phase: "save", phasePercent: 30, traceKey: `internal:${index}:history` });
                 setGenerationProgress({ title: "整理最终文件名", actionDetail: "保留最终视频并同步预览", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(99.4), phase: "save", phasePercent: 60, traceKey: `internal:${index}:filename` });
@@ -4537,6 +4919,7 @@ function createWorkbench(node) {
                 shot.status = "done";
                 if (stageOutputs.size) setGenerationProgress({ title: "更新视频列表", actionDetail: "视频已实时写入列表和预览窗口", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(99.7), phase: "save", phasePercent: 85, traceKey: `internal:${index}:results` });
                 save();
+                if (runtime.cancelRequested) throw new Error("用户停止生成");
                 setGenerationProgress({ title: "完成", actionDetail: shot.title || `分镜 ${position + 1}`, batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: (index + 1) / jobs.length * 100, phase: "done", phasePercent: 100 });
                 if (index < jobs.length - 1 && (index + 1) % cleanupSettings.every === 0) {
                     setGenerationProgress({ title: "卸载", actionDetail: "缓存/显存/模型", batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: (index + 1) / jobs.length * 100, phase: "load", phasePercent: null });
@@ -4713,6 +5096,8 @@ function createWorkbench(node) {
         save();
     };
     const close = () => {
+        if (promptOptimizer.isBusy()) return;
+        window.removeEventListener("xiantu-function-tags-changed", refreshMarkedNodes);
         video.pause();
         clearInterval(hardwareTimer);
         clearInterval(selfLiftCompatibilityTimer);
@@ -4727,13 +5112,12 @@ function createWorkbench(node) {
     q("[data-close-workbench]").onclick = close;
     root.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
-        if (!placeholderDialog.hidden) {
-            closePlaceholderDialog();
+        if (promptOptimizer.close()) {
             event.stopPropagation();
             return;
         }
-        if (!sigmaDialog.hidden) {
-            closeSigmaDialog();
+        if (!placeholderDialog.hidden) {
+            closePlaceholderDialog();
             event.stopPropagation();
             return;
         }
@@ -4765,6 +5149,59 @@ function createWorkbench(node) {
 
 app.registerExtension({
     name: "Xiantu.VideoEditorWorkbench",
+    setup() {
+        const canvas = app.canvas;
+        if (!canvas || canvas.__xiantuGroupBadgeInstalled || typeof canvas.drawGroups !== "function") return;
+        const drawGroups = canvas.drawGroups;
+        canvas.__xiantuGroupBadgeInstalled = true;
+        canvas.drawGroups = function (target, ctx) {
+            const result = drawGroups.apply(this, arguments);
+            const graph = this.graph;
+            if (!graph?.extra?.[GROUP_TAGS]) return result;
+
+            ctx.save();
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            for (const group of taggedFunctionGroups(graph)) {
+                const [x, y, width] = group._bounding || [];
+                if (!Number.isFinite(width) || width < 90) continue;
+                const { mode } = functionGroupTag(graph, group);
+                const label = mode === 4 ? "已忽略" : mode === 0 ? "已启用" : "已标记";
+                const badgeWidth = Math.ceil(ctx.measureText(label).width) + 16;
+                const left = x + width - badgeWidth - 8;
+                const top = y + 5;
+                ctx.fillStyle = mode === 4 ? "#422b1c" : "#07343b";
+                ctx.strokeStyle = mode === 4 ? "#f5aa60" : "#18dfe2";
+                ctx.lineWidth = 1;
+                ctx.fillRect(left, top, badgeWidth, 18);
+                ctx.strokeRect(left, top, badgeWidth, 18);
+                ctx.fillStyle = mode === 4 ? "#ffe0b2" : "#8bfff8";
+                ctx.fillText(label, left + badgeWidth / 2, top + 9);
+            }
+            ctx.restore();
+            return result;
+        };
+    },
+    getCanvasMenuItems(canvas) {
+        const graph = canvas.graph;
+        if (!graph?._nodes?.some((item) => String(item.comfyClass || item.type) === NODE)) return [];
+        const group = graph.getGroupOnPos?.(...canvas.graph_mouse);
+        if (!group || group.id == null) return [];
+        const tag = functionGroupTag(graph, group);
+        return [{
+            content: tag ? "闲兔功能标记：工作流组" : "闲兔功能标记：标记此组",
+            callback: () => {
+                if (!tag) setFunctionGroupTag(graph, group, {});
+            },
+            has_submenu: Boolean(tag),
+            submenu: tag ? { options: [
+                { content: "启用组", callback: () => setFunctionGroupTag(graph, group, { mode: 0 }) },
+                { content: "忽略组", callback: () => setFunctionGroupTag(graph, group, { mode: 4 }) },
+                { content: "取消组标记", callback: () => setFunctionGroupTag(graph, group, null) },
+            ] } : undefined,
+        }];
+    },
     async beforeRegisterNodeDef(nodeType) {
         if (nodeType.prototype.__xiantuFunctionTagMenuInstalled) return;
         nodeType.prototype.__xiantuFunctionTagMenuInstalled = true;
@@ -4786,12 +5223,14 @@ app.registerExtension({
                 } else {
                     this.properties[FUNCTION_TAG] = { category, label: "", note: FUNCTION_TAG_LABELS[category] };
                 }
+                window.dispatchEvent(new CustomEvent("xiantu-function-tags-changed", { detail: this.graph }));
                 this.graph?.change?.();
                 this.graph?.setDirtyCanvas?.(true, true);
             };
             const clearTag = () => {
                 this.properties ??= {};
                 delete this.properties[FUNCTION_TAG];
+                window.dispatchEvent(new CustomEvent("xiantu-function-tags-changed", { detail: this.graph }));
                 this.graph?.change?.();
                 this.graph?.setDirtyCanvas?.(true, true);
             };

@@ -9,13 +9,76 @@ latent tail instead of decoding the previous MP4.
 from __future__ import annotations
 
 import hashlib
+import asyncio
+import json
 import os
 from pathlib import Path
 
 import folder_paths
 import torch
+from aiohttp import web
+from server import PromptServer
 from comfy.ldm.minimax.model import FRAME_PER_TOKEN
 from comfy.nested_tensor import NestedTensor
+
+
+def _recover_saved_video(workbench_id, shot_id):
+    import av
+
+    if not workbench_id or not shot_id:
+        raise ValueError("恢复承接需要当前导演台和上一分镜标识。")
+    output_root = Path(folder_paths.get_output_directory()).resolve()
+    video_root = output_root / "短剧-漫剧"
+    candidates = sorted(
+        video_root.rglob("*.mp4") if video_root.is_dir() else [],
+        key=lambda item: ("/放大后/" in item.as_posix(), item.stat().st_mtime_ns),
+        reverse=True,
+    )
+    for path in candidates:
+        if "合并成品" in path.parts or "合并成片" in path.parts:
+            continue
+        try:
+            resolved = path.resolve()
+            if not resolved.is_relative_to(output_root):
+                continue
+            with av.open(str(resolved)) as container:
+                prompt = json.loads(container.metadata.get("prompt") or "{}")
+                workbench = prompt.get(str(workbench_id), {})
+                if workbench.get("class_type") != "XiantuVideoEditorWorkbench":
+                    continue
+                state = json.loads(workbench.get("inputs", {}).get("editor_state") or "{}")
+                if str(state.get("activeShotId") or "") != str(shot_id):
+                    continue
+                if not any(str(item.get("id") or "") == str(shot_id) for item in state.get("shots", [])):
+                    continue
+                stream = next(iter(container.streams.video), None)
+                if stream is None or not stream.duration or not stream.time_base:
+                    continue
+                relative = resolved.relative_to(output_root)
+                return {
+                    "filename": relative.name,
+                    "subfolder": relative.parent.as_posix(),
+                    "type": "output",
+                    "shotId": str(shot_id),
+                    "width": stream.width,
+                    "height": stream.height,
+                    "duration": float(stream.duration * stream.time_base),
+                }
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return None
+
+
+@PromptServer.instance.routes.post("/xiantu/video-editor/recover-saved-output")
+async def recover_saved_output(request):
+    try:
+        payload = await request.json()
+        output = await asyncio.to_thread(
+            _recover_saved_video, str(payload.get("workbench_id") or ""), str(payload.get("shot_id") or ""),
+        )
+        return web.json_response({"ok": True, "output": output})
+    except (ValueError, TypeError, OSError) as error:
+        return web.json_response({"ok": False, "error": str(error)}, status=400)
 
 
 def _cache_path(cache_key: str) -> Path:
@@ -89,6 +152,7 @@ class XiantuVideoLatentCacheLoad:
         return {"required": {"cache_key": ("STRING", {"default": ""})},
                 "optional": {"previous_output": ("STRING", {"default": ""}),
                              "video_vae": ("VAE",), "audio_vae": ("VAE",),
+                             "target_latent": ("LATENT",),
                              "overlap_frames": ("INT", {"default": 22, "min": 1, "max": 2048})}}
 
     RETURN_TYPES = ("LATENT",)
@@ -102,7 +166,7 @@ class XiantuVideoLatentCacheLoad:
         return path.stat().st_mtime_ns if path.is_file() else float("nan")
 
     def load(self, cache_key, previous_output="", video_vae=None, audio_vae=None,
-             overlap_frames=22):
+             overlap_frames=22, target_latent=None):
         path = _cache_path(cache_key)
         if cache_key and path.is_file():
             try:
@@ -115,12 +179,19 @@ class XiantuVideoLatentCacheLoad:
             raise ValueError("恢复上一分镜AV数据需要连接视频VAE和音频VAE；不会改用另一套续接算法。")
         import json
         import comfy.audio
-        from .video_editor import _load_video
+        from .video_editor import _load_video, _resize_video_frames
         frames, audio = _load_video(json.loads(previous_output))
         count = int(overlap_frames)
         if len(frames) < count:
             raise ValueError("上一分镜视频不足所选上下文帧数。")
-        video = video_vae.encode(frames[-count:])
+        tail = frames[-count:]
+        if target_latent is not None:
+            target_samples = target_latent["samples"]
+            target_video = list(target_samples.unbind())[0] if getattr(target_samples, "is_nested", False) else target_samples
+            width, height = int(target_video.shape[-1]) * 16, int(target_video.shape[-2]) * 16
+            if tuple(tail.shape[1:3]) != (height, width):
+                tail = _resize_video_frames(tail, width, height)
+        video = video_vae.encode(tail)
         sample_rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
         if isinstance(audio, dict) and torch.is_tensor(audio.get("waveform")):
             waveform = audio["waveform"]

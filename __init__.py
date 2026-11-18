@@ -39,6 +39,7 @@ from .h3_data_bridge import route_bridge_after_continuation as _route_h3_data_br
 from .h3_latent_continuation import NODE_CLASS_MAPPINGS as H3_CONTINUATION_NODE_CLASS_MAPPINGS
 from .h3_latent_continuation import NODE_DISPLAY_NAME_MAPPINGS as H3_CONTINUATION_NODE_DISPLAY_NAME_MAPPINGS
 from . import storyboard_ai as _storyboard_ai
+from . import video_prompt_optimizer as _video_prompt_optimizer
 from . import local_image_import as _local_image_import
 NODE_CLASS_MAPPINGS.update(POSE_NODE_CLASS_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(POSE_NODE_DISPLAY_NAME_MAPPINGS)

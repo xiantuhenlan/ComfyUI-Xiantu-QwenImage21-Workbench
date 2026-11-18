@@ -1,5 +1,4 @@
 .github/
-.gitignore
 .vscode/
 .idea/
 __pycache__/
@@ -15,6 +14,4 @@ web_20261004_dashboard/
 web_20261004_fullscreen_ui/
 web_20261004_integrated_ui/
 web_20261004_reference_ui/
-CHANGELOG.md
-UPDATE_RULES.md
-plugin_manifest.json
+.coordination/

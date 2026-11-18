@@ -858,7 +858,7 @@ async def delete_image_outputs(request):
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/finalize-video-name")
 async def finalize_video_name(request):
-    """Replace VHS' fixed ``-audio`` suffix after muxing completes."""
+    """Keep the generated VHS filename and validate the completed output."""
     try:
         record = await request.json()
         output_root = Path(folder_paths.get_output_directory()).resolve()
@@ -868,74 +868,20 @@ async def finalize_video_name(request):
         source.relative_to(output_root)
     except (ValueError, OSError) as error:
         return _error(f"最终视频路径无效：{error}")
-    has_audio_suffix = source.stem.lower().endswith("-audio")
-    muxed_stem = source.stem[:-6] if has_audio_suffix else source.stem
-    # VHS appends a five-digit counter and may also emit a silent MP4 and a
-    # metadata PNG.  The director promises one authoritative video per shot,
-    # so publish the muxed result under the stable prefix and remove only the
-    # matching VHS intermediates after the atomic replacement succeeds.
-    stable_stem = re.sub(r"_\d{5}$", "", muxed_stem)
-    target = source.with_name(f"{stable_stem}{source.suffix}")
-    # This route is deliberately idempotent. Saved projects may still contain
-    # VHS' old -audio name after the muxed file has already been finalized.
-    if not source.is_file() and target.is_file():
-        if target.stat().st_size <= 0:
-            return _error("视频仍在生成，请完成后再播放", status=409)
-        _sync_finalized_name_to_history(source.name, target.name, subfolder)
-        return web.json_response({
-            "ok": True,
-            "filename": target.name,
-            "subfolder": subfolder,
-            "type": "output",
-            "size": target.stat().st_size,
-        })
+    # Retain the counter (and -audio suffix, when present). Collapsing all
+    # generations to one prefix overwrote prior videos, including outputs
+    # belonging to another workflow that happened to use the same prefix.
+    # Never resolve a missing numbered output to a different, stable filename.
     if not source.is_file():
         return _error(f"找不到最终视频：{source.name}", status=404)
-    if source == target:
-        if source.stat().st_size <= 0:
-            return _error("视频仍在生成，请完成后再播放", status=409)
-        return web.json_response({
-            "ok": True,
-            "filename": source.name,
-            "subfolder": subfolder,
-            "type": "output",
-            "size": source.stat().st_size,
-        })
-    deadline = time.monotonic() + 12.0
-    while True:
-        try:
-            # VHS first creates this same-name silent intermediate. It is not
-            # the deliverable; the muxed -audio file is the final video. Keep
-            # the old target in place until the atomic replacement succeeds;
-            # never delete it first when Windows still has either file open.
-            os.replace(source, target)
-            break
-        except PermissionError as error:
-            if time.monotonic() >= deadline:
-                return _error(f"视频编码器仍在占用文件，稍后将再次整理文件名：{error}", status=409)
-            await asyncio.sleep(0.25)
-        except OSError as error:
-            return _error(f"最终视频改名失败：{error}", status=500)
-    intermediate_pattern = re.compile(
-        rf"^{re.escape(stable_stem)}_\d{{5}}(?:-audio)?\.(?:mp4|webm|mov|mkv|avi|m4v|png)$",
-        re.IGNORECASE,
-    )
-    for sibling in target.parent.iterdir():
-        if sibling == target or not sibling.is_file():
-            continue
-        if not intermediate_pattern.fullmatch(sibling.name):
-            continue
-        try:
-            sibling.unlink()
-        except OSError:
-            pass
-    _sync_finalized_name_to_history(source.name, target.name, subfolder)
+    if source.stat().st_size <= 0:
+        return _error("视频仍在生成，请完成后再播放", status=409)
     return web.json_response({
         "ok": True,
-        "filename": target.name,
+        "filename": source.name,
         "subfolder": subfolder,
         "type": "output",
-        "size": target.stat().st_size,
+        "size": source.stat().st_size,
     })
 
 

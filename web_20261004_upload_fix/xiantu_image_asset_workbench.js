@@ -792,7 +792,8 @@ const normalizeState = (raw, projectName) => {
     return state;
 };
 
-const fileUrl = (record, bust = false) => record?.name ? api.apiURL(`/view?${new URLSearchParams({ filename: record.name, subfolder: record.subfolder || "", type: record.type || "input", ...(bust ? { t: String(Date.now()) } : {}) }).toString()}`) : "";
+const imageOutputCacheSession = makeId();
+const fileUrl = (record, bust = false) => record?.name ? api.apiURL(`/view?${new URLSearchParams({ filename: record.name, subfolder: record.subfolder || "", type: record.type || "input", ...(bust ? { t: String(Date.now()) } : record.type === "output" ? { t: String(record.outputRevision || imageOutputCacheSession) } : {}) }).toString()}`) : "";
 const fileRecordKey = (record) => `${String(record?.type || "output")}/${String(record?.subfolder || "")}/${String(record?.name || record?.filename || "")}`;
 
 const applyNodeProtocol = (node, state) => {
@@ -2016,9 +2017,19 @@ function createWorkbench(node) {
             Object.values(value).forEach(visit);
         };
         const outputs = history?.outputs;
+        const promptNodes = Array.isArray(history?.prompt) ? history.prompt[2] : (history?.prompt?.output || history?.prompt);
+        if (!outputs || !WORKBENCH_NODE_TYPES.has(String(promptNodes?.[String(node.id)]?.class_type || ""))) return [];
+        const belongsToWorkbench = (id, seen = new Set()) => {
+            id = String(id);
+            if (id === String(node.id)) return true;
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return Object.values(promptNodes[id]?.inputs || {}).some((value) => Array.isArray(value)
+                && value.length === 2 && promptNodes[String(value[0])] && belongsToWorkbench(value[0], seen));
+        };
         const outputNodeIds = Array.isArray(history?.prompt?.[4]) ? history.prompt[4].map(String) : [];
-        if (outputs && outputNodeIds.length) outputNodeIds.forEach((outputNodeId) => visit(outputs[outputNodeId]));
-        else visit(outputs || history);
+        const candidates = outputNodeIds.length ? outputNodeIds : Object.keys(outputs);
+        candidates.filter((id) => belongsToWorkbench(id)).forEach((id) => visit(outputs[id]));
         return [...new Map(found.map((item) => [`${item.type}/${item.subfolder}/${item.name}`, item])).values()];
     };
     const queuedWorkbenchState = (record) => {
@@ -2042,6 +2053,7 @@ function createWorkbench(node) {
         if (!target || !images.length) return false;
         const { imageTask, profile } = target;
         const outputState = outputStateFor(imageTask, profile);
+        if (String(outputState.lastPromptId || "") !== String(promptId || "") || !promptId) return false;
         const output = images.at(-1);
         const outputKey = fileRecordKey(output);
         if (outputState.deletedOutputs.includes(outputKey)) return false;
@@ -2051,6 +2063,7 @@ function createWorkbench(node) {
             outputState.outputs = outputState.outputs.slice(-10);
             savedOutput = outputState.outputs.at(-1);
         }
+        savedOutput.outputRevision = String(promptId || imageOutputCacheSession);
         outputState.lastPromptId = String(promptId || "");
         outputState.lastOutput = savedOutput;
         return true;
@@ -2860,6 +2873,7 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
                     outputState.outputs = outputState.outputs.slice(-10);
                     savedOutput = outputState.outputs.at(-1);
                 }
+                savedOutput.outputRevision = String(queued.prompt_id);
                 outputState.lastOutput = savedOutput;
                 stopImageDuration();
                 setHeaderProgress("图片生成完成", (index + 1) / jobs.length * 100, `图片 ${index + 1}/${jobs.length}`);
