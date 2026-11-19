@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "algorithm": "SHA256",
-  "generatedAt": "2026-11-19T09:22:54.471294+00:00",
+  "generatedAt": "2026-11-19T09:31:36.072909+00:00",
   "plugin": "XiantuQwenImage21Director",
   "activeWebDirectory": "web_20261004_upload_fix",
   "nodes": {
@@ -2572,7 +2572,7 @@
             680,
             5217
           ],
-          "sha256": "049c0e9e687835c5e634f462f76b544ef61539de13b9cc967589034a1b76e9bb"
+          "sha256": "1df15c9dec6e9585beb289b67ccd74d8d51798e69b1db9483332764c0bd95fd9"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv": {
           "kind": "frontend-function",
@@ -2825,7 +2825,7 @@
           "sha256": "3fa0593b4cdbaf72cca64cce0aa7c4cb9d7bf325bf0aef6e7dc4991816002be5"
         }
       },
-      "fingerprint": "ea932813ad5124b05c556fd838888a0b11364ea9b36002da57926e960214693d"
+      "fingerprint": "e214a92f600ca31ae0a625e7994617a2b6194857676440ed774fe12a4baa1529"
     },
     "XiantuVideoFaceRepair": {
       "displayName": "闲兔｜远景人脸修复",
@@ -2973,8 +2973,8 @@
       "size": 146
     },
     "CHANGELOG.md": {
-      "sha256": "e9cb2eba3fb2b4252d2f17b26f98aa628ca87832244b8975739c6eea1a9df8c0",
-      "size": 31353
+      "sha256": "d631c368fdcd07033186e929e5b4ec79724a1b9d3e560bb6aac290f32a4e1ec6",
+      "size": 32287
     },
     "LICENSE": {
       "sha256": "e6df8f0619987e25790f0721114e025679ffe8a9d6b3253eb053dc89d854192b",
@@ -3057,7 +3057,7 @@
       "size": 10221
     },
     "plugin_manifest.json": {
-      "sha256": "07686bdd12151c1355dd000e7c31b92011e0dd7524871310c2ccc8f352058687",
+      "sha256": "4c7e0c63e98340a84e953fe9ca805ec7860586284fe9c31edabc1d88551c14cd",
       "size": 415
     },
     "pose.py": {
@@ -3065,7 +3065,7 @@
       "size": 6409
     },
     "pyproject.toml": {
-      "sha256": "a852468e11b7fe666556351934a359144cc5d5d2e5ea48feeee74352b64b7a61",
+      "sha256": "98dcea7807db1c9882a76b3e21587cb2e82bd73afa42d47874aac2a336973dc8",
       "size": 764
     },
     "requirements.txt": {
@@ -3201,12 +3201,12 @@
       "size": 117555
     },
     "web_20261004_upload_fix/xiantu_video_editor.js": {
-      "sha256": "9b2dd9014bb99978c0a5bf708e1ff6761afa4821697eb5bfb7322bbd58be5b79",
-      "size": 352171
+      "sha256": "77138ec573bc99d3b7fdcdf6cb71082939d39d971425bf9e59456b4dfefb88a4",
+      "size": 352177
     },
     "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js": {
-      "sha256": "4dd10e3a0e676dff43cf7a6e0d4b64a0613a828cf90bdeafc57ee4b6db4ea900",
-      "size": 16459
+      "sha256": "b2bfd4d9eb401898966af736750baf67422abeecd2e9c9749821d6c15a3e4b52",
+      "size": 16724
     }
   }
 }

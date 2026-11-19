@@ -867,8 +867,8 @@ function createWorkbench(node) {
               <button type="button" data-xve-opt="undo">恢复原文</button>
               <button type="button" data-xve-opt="stop" hidden>停止</button>
               <div class="xve-opt-scope" role="group" aria-label="优化范围">
-                <label><input type="radio" name="optimization_scope" value="shot"> 单分镜</label>
-                <label><input type="radio" name="optimization_scope" value="all"> 全局</label>
+                <label><input type="checkbox" name="optimization_scope" value="shot"> 单分镜</label>
+                <label><input type="checkbox" name="optimization_scope" value="all"> 全局</label>
               </div>
               <button type="button" data-xve-opt="confirm" disabled>确认</button>
             </footer>

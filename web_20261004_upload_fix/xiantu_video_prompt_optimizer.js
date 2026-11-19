@@ -263,6 +263,11 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
         if (!busy) void refreshCatalog();
     };
     panel.onchange = (event) => {
+        if (event.target.name === "optimization_scope" && event.target.checked) {
+            for (const option of modal.querySelectorAll('[name="optimization_scope"]')) {
+                if (option !== event.target) option.checked = false;
+            }
+        }
         if (event.target === model) {
             settings.mmproj_model = "";
             renderProjectors();
