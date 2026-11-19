@@ -581,17 +581,19 @@ const sheetJson = (value, label, fallback) => {
     try { return JSON.parse(value); }
     catch { throw new Error(`“${label}”中的配置不是有效 JSON`); }
 };
+// Sheet metadata is JSON; serialize reactive graph proxies as plain data.
+const sheetExportCopy = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const sheetFunctionSnapshot = (graph, settings) => ({
     version: 1,
-    ...structuredClone(settings),
+    ...sheetExportCopy(settings),
     nodes: (graph?._nodes || []).filter((item) => readFunctionTag(item)).map((item) => ({
         id: String(item.id), type: String(item.comfyClass || item.type), title: String(item.title || ""),
-        tag: structuredClone(item.properties[FUNCTION_TAG]), mode: Number(item.mode || 0),
+        tag: sheetExportCopy(item.properties[FUNCTION_TAG]), mode: Number(item.mode || 0),
         widgets: (item.widgets || []).filter((widget) => widget.name && ["string", "number", "boolean"].includes(typeof widget.value))
             .map((widget) => ({ name: widget.name, value: widget.value })),
     })),
     groups: taggedFunctionGroups(graph).map((group) => ({
-        id: String(group.id), title: String(group.title || ""), tag: structuredClone(functionGroupTag(graph, group)),
+        id: String(group.id), title: String(group.title || ""), tag: sheetExportCopy(functionGroupTag(graph, group)),
     })),
 });
 const sheetNodeMapping = (graph, config) => {
@@ -2463,7 +2465,8 @@ function createWorkbench(node) {
                     window.removeEventListener("pointermove", onMove);
                     window.removeEventListener("pointerup", onUp);
                     clip._xveDragged = moved;
-                    renderTimeline(); save();
+                    // Keep the click target alive when selecting without dragging.
+                    if (moved) { renderTimeline(); save(); }
                 };
                 window.addEventListener("pointermove", onMove);
                 window.addEventListener("pointerup", onUp, { once: true });
@@ -3433,7 +3436,17 @@ function createWorkbench(node) {
     };
     window.addEventListener("xiantu-function-tags-changed", refreshMarkedNodes);
     const sheetFileInput = q("[data-sheet-file]");
-    q("[data-download-sheet]").onclick = downloadSheet;
+    q("[data-download-sheet]").onclick = () => {
+        if (q("[data-error-title]").textContent === "表格导出失败") showDirectorError();
+        try {
+            downloadSheet();
+        } catch (error) {
+            console.error("视频导演台表格导出失败", error);
+            sheetButtonStatus(q("[data-download-sheet]"), String(error?.message || error), true);
+            showDirectorError(String(error?.message || error));
+            q("[data-error-title]").textContent = "表格导出失败";
+        }
+    };
     q("[data-upload-sheet]").onclick = () => sheetFileInput.click();
     const repairDialog = q("[data-repair-dialog]");
     const numberInRange = (value, minimum, maximum, fallback) => {

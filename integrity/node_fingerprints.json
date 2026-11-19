@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "algorithm": "SHA256",
-  "generatedAt": "2026-11-19T09:31:36.072909+00:00",
+  "generatedAt": "2026-11-19T15:20:46.484327+00:00",
   "plugin": "XiantuQwenImage21Director",
   "activeWebDirectory": "web_20261004_upload_fix",
   "nodes": {
@@ -2482,7 +2482,7 @@
           "kind": "frontend-remainder",
           "name": "前端结构、常量、模板与非函数代码",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
-          "sha256": "94f322b42a05dd278e81b1133f8cc40b2dc83d80da5730f8d996178143e2a811"
+          "sha256": "f8bf6325197cfc2ff915ee4569ea4de11f875d4c74ffc92f761f894e2abb0e44"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyFunctionGroupModes": {
           "kind": "frontend-function",
@@ -2499,8 +2499,8 @@
           "name": "applyTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            5282,
-            5298
+            5295,
+            5311
           ],
           "sha256": "ba43c84e620f74f419dc35de27acdeffcc28b9016de51799dec6a3b4563cc002"
         },
@@ -2519,8 +2519,8 @@
           "name": "clearTag",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            5299,
-            5305
+            5312,
+            5318
           ],
           "sha256": "87a5a294b5ae2e987505236caf7b7b0d939e6116bcb14d19090e19d5c36aa636"
         },
@@ -2569,18 +2569,18 @@
           "name": "createWorkbench",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            680,
-            5217
+            682,
+            5230
           ],
-          "sha256": "1df15c9dec6e9585beb289b67ccd74d8d51798e69b1db9483332764c0bd95fd9"
+          "sha256": "597c17878ae58444e717bf2be964a13dd958d490c3549e353b9ee7c24b69dc7e"
         },
         "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv": {
           "kind": "frontend-function",
           "name": "downloadCsv",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            666,
-            672
+            668,
+            674
           ],
           "sha256": "f2c351c98823f42b0007eb6c039d034001d5d8255d9bbf4b4e2a157feed4ae21"
         },
@@ -2629,8 +2629,8 @@
           "name": "hideInternalWidget",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            5353,
-            5363
+            5366,
+            5376
           ],
           "sha256": "560a7bfd1b8e4a2042721df1ef79a2350884e34be5523f041cc91e5e7367c911"
         },
@@ -2659,8 +2659,8 @@
           "name": "open",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            5388,
-            5399
+            5401,
+            5412
           ],
           "sha256": "f4cf0f0ac2321c062f2f51c8d39e7a5017c9e1d1d37b97d9784421512ab559a3"
         },
@@ -2669,8 +2669,8 @@
           "name": "parseCsv",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            648,
-            665
+            650,
+            667
           ],
           "sha256": "55208e259e2cd5e249db422d6d8876ba8850320c46411dc2d097bd9931e8c353"
         },
@@ -2679,8 +2679,8 @@
           "name": "persistedAssetUrl",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            674,
-            678
+            676,
+            680
           ],
           "sha256": "37364538c0c750ef9b3c13f1dadcac912ae66c4def00b83fb888a612d39eeb24"
         },
@@ -2769,8 +2769,8 @@
           "name": "sheetNodeMapping",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            597,
-            606
+            599,
+            608
           ],
           "sha256": "5248eb3d06414627aa3a21676d3cb8327c00263c19e09c83c85df41381668952"
         },
@@ -2779,8 +2779,8 @@
           "name": "sheetRemapSelections",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            607,
-            614
+            609,
+            616
           ],
           "sha256": "80c5167bcff2c68ee8309fc798b4198307edacdd5aa53d1654c4c48d728c401f"
         },
@@ -2789,8 +2789,8 @@
           "name": "sheetRestoreFunctionMarks",
           "file": "web_20261004_upload_fix/xiantu_video_editor.js",
           "lines": [
-            615,
-            641
+            617,
+            643
           ],
           "sha256": "35efdb8bf03c37aca5cf1eb3b2460a5c70e670c3bdd162708c9775a2072f0d3e"
         },
@@ -2825,7 +2825,7 @@
           "sha256": "3fa0593b4cdbaf72cca64cce0aa7c4cb9d7bf325bf0aef6e7dc4991816002be5"
         }
       },
-      "fingerprint": "e214a92f600ca31ae0a625e7994617a2b6194857676440ed774fe12a4baa1529"
+      "fingerprint": "9ed189729c8eb95282713e7f2c4698c85ccd7dfe9680736dfaedc687a9819262"
     },
     "XiantuVideoFaceRepair": {
       "displayName": "闲兔｜远景人脸修复",
@@ -2973,8 +2973,8 @@
       "size": 146
     },
     "CHANGELOG.md": {
-      "sha256": "d631c368fdcd07033186e929e5b4ec79724a1b9d3e560bb6aac290f32a4e1ec6",
-      "size": 32287
+      "sha256": "aff83e328310cfd79db9c80e530ec155809719cbd64a1b596f38e584fd5e1546",
+      "size": 33337
     },
     "LICENSE": {
       "sha256": "e6df8f0619987e25790f0721114e025679ffe8a9d6b3253eb053dc89d854192b",
@@ -3057,7 +3057,7 @@
       "size": 10221
     },
     "plugin_manifest.json": {
-      "sha256": "4c7e0c63e98340a84e953fe9ca805ec7860586284fe9c31edabc1d88551c14cd",
+      "sha256": "2147ce61d146d55c7bf5a7dbbc34d08db088c1c287bf7fb34c45348fb4ffb707",
       "size": 415
     },
     "pose.py": {
@@ -3065,7 +3065,7 @@
       "size": 6409
     },
     "pyproject.toml": {
-      "sha256": "98dcea7807db1c9882a76b3e21587cb2e82bd73afa42d47874aac2a336973dc8",
+      "sha256": "0b06849ed9d92d490b36ada669f079645a803c4dcca7db486f66e1cf560eea10",
       "size": 764
     },
     "requirements.txt": {
@@ -3201,8 +3201,8 @@
       "size": 117555
     },
     "web_20261004_upload_fix/xiantu_video_editor.js": {
-      "sha256": "77138ec573bc99d3b7fdcdf6cb71082939d39d971425bf9e59456b4dfefb88a4",
-      "size": 352177
+      "sha256": "00f45605f2822ec848003ac0d3ced0e3fee2ff33438f71c7c38505cbe11eefb6",
+      "size": 352934
     },
     "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js": {
       "sha256": "b2bfd4d9eb401898966af736750baf67422abeecd2e9c9749821d6c15a3e4b52",
