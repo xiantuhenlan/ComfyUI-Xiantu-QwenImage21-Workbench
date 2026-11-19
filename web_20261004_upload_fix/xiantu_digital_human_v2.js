@@ -148,7 +148,8 @@ function studio(node) {
     const promptEditor = $(root, "[data-original]");
     let state = null, decoded = null, zoom = 1, showMarkers = true, saving = 0, playFrame = 0, zoomFrame = 0, audioSeekToken = 0, audioSeeking = false;
     let audioContext = null, localAudioUrl = "";
-    let pinnedTime = 0, selectedCutIndex = -1, promptRange = null, promptView = "original", resultView = "after", previewResultId = "", generationActive = false, generationPercent = 0, generationResetTimer = 0, generationPulseTimer = 0, generationOwnerToken = "";
+    let pinnedTime = 0, selectedCutIndex = -1, promptRange = null, promptView = "original", resultView = "after", previewResultId = "", generationActive = false, generationPercent = 0, generationResetTimer = 0, generationPulseTimer = 0, generationOwnerToken = "", generationHistoryTimer = 0;
+    let projectSaveQueue = Promise.resolve();
     let assetMode = false, assetFiles = [], assetCategory = "all", assetTargetSegmentIndex = 0, pendingRefSegmentIndex = 0;
     const refFields = {current:"refs"};
     const refLabels = {current:"当前分镜参考图"};
@@ -157,7 +158,7 @@ function studio(node) {
     const generateButton = $(root,"[data-generate]");
     const setGenerationState = (phase, percent=generationPercent, message="") => {
         clearTimeout(generationResetTimer);
-        if(phase==="success"||phase==="error"||phase==="idle"){clearInterval(generationPulseTimer);generationPulseTimer=0;}
+        if(phase==="success"||phase==="error"||phase==="idle"){clearInterval(generationPulseTimer);generationPulseTimer=0;clearInterval(generationHistoryTimer);generationHistoryTimer=0;}
         generationPercent=Math.max(0,Math.min(100,Number(percent)||0));
         const bar=$(root,"[data-generation-bar]"),label=$(root,"[data-generation-text]");
         bar.style.width=`${generationPercent}%`;
@@ -280,17 +281,21 @@ function studio(node) {
         if (segmentWidget) segmentWidget.value = state?.selected_segment || 0;
         node.setDirtyCanvas?.(true, true);
     };
-    const save = async ({writeOptimizedPrompt=false}={}) => {
+    const save = async ({writeOptimizedPrompt=false,throwOnError=false}={}) => {
         if (!state) return;
         const ticket = ++saving;
         try {
             const payload = writeOptimizedPrompt
                 ? {...state, _write_optimized_prompt_ids:[String(selected()?.id || "")]}
                 : state;
-            const data = await jsonFetch(endpoint(state), {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+            // Keep filename edits and generated-result writes in request order.
+            const url=endpoint(state),body=JSON.stringify(payload);
+            const pending=projectSaveQueue.catch(()=>{}).then(()=>jsonFetch(url,{method:"PUT",headers:{"Content-Type":"application/json"},body}));
+            projectSaveQueue=pending;
+            const data = await pending;
             if (ticket === saving) state = data.project;
             syncWidgets();
-        } catch (error) { notify(error.message, true); }
+        } catch (error) { notify(error.message, true);if(throwOnError)throw error; }
     };
     const aspectRatio = aspect => ({"1:1":1,"2:3":2/3,"3:2":3/2,"3:4":3/4,"4:3":4/3,"9:16":9/16,"16:9":16/9,"21:9":21/9})[String(aspect||"").split(/[（ (]/)[0]] || 16/9;
     const resolutionFor = (megapixels, aspect=state.settings.aspect, multiple=Number(state.settings.multiple)||32) => {
@@ -390,11 +395,12 @@ function studio(node) {
         state.results ||= [];
         const segment=state.segments[resultSegmentIndex]||selected();let added=0,lastId="";
         for(const item of candidates){const fingerprint=`${item.type||"output"}/${item.subfolder||""}/${item.filename}`;if(state.results.some(record=>record.fingerprint===fingerprint))continue;const id=crypto.randomUUID().replaceAll("-","").slice(0,12);state.results.push({id,fingerprint,filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output",format:item.format||"video/mp4",segment_id:segment.id,segment_index:resultSegmentIndex,segment_name:`${String(resultSegmentIndex+1).padStart(2,"0")} - ${segment.name}`,duration:Math.max(0,Number(segment.end||0)-Number(segment.start||0)),created:Date.now(),selected:false});lastId=id;added++;}
-        if(added){previewResultId=lastId;await save();renderResults();notify(`已加入 ${added} 个生成视频`);}
+        if(added){previewResultId=lastId;await save({throwOnError:true});renderResults();notify(`已加入 ${added} 个生成视频`);}
         return added;
     };
-    const captureHistoryResults = async (promptId, segmentIndex) => {
+    const captureHistoryResults = async (promptId, segmentIndex, completedEntry=null) => {
         if(!promptId)return 0;
+        if(completedEntry)return await appendVideoResults(collectVideoItems(completedEntry.outputs||{}),segmentIndex);
         try{for(let attempt=0;attempt<10;attempt++){if(attempt)await new Promise(resolve=>setTimeout(resolve,250));const response=await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);if(!response.ok)continue;const history=await response.json(),entry=history?.[promptId]||Object.values(history||{})[0],items=collectVideoItems(entry?.outputs||{});if(items.length)return await appendVideoResults(items,segmentIndex);}notify("工作流已完成，但历史记录中没有找到视频文件",true);return 0;}catch(error){notify(`读取生成视频失败：${error.message}`,true);return 0;}
     };
     const captureResult = async ({detail}) => {
@@ -423,38 +429,74 @@ function studio(node) {
     const ownsGeneration=()=>generationActive&&generationOwnerToken&&globalThis.__xiantuDh2BatchOwner===generationOwnerToken;
     const activeSceneNumber=()=>Number(generationQueueIndices[Math.min(generationCompleted,generationQueueIndices.length-1)]??0)+1;
     const readComfyQueue=async()=>{const response=await api.fetchApi("/queue");if(!response.ok)throw new Error("无法读取 ComfyUI 队列");const data=await response.json();return [...(data.queue_running||[]),...(data.queue_pending||[])];};
+    const readComfyHistory=async(promptId="")=>{const path=promptId?`/history/${encodeURIComponent(promptId)}`:"/history?max_items=64";const response=await api.fetchApi(path);if(!response.ok)throw new Error("无法读取 ComfyUI 生成记录");return await response.json();};
     const queuePromptIds=items=>new Set(items.map(item=>String(item?.[1]||"")).filter(Boolean));
     const resolveQueuedPromptId=async(segmentIndex,beforeIds,directResult)=>{
         const direct=String(directResult?.prompt_id||directResult?.promptId||"");if(direct)return direct;
         for(let attempt=0;attempt<12;attempt++){
             if(attempt)await new Promise(resolve=>setTimeout(resolve,100));
             const items=await readComfyQueue();
-            const matches=items.filter(item=>{const id=String(item?.[1]||"");const promptNode=item?.[2]?.[String(node.id)];return id&&!beforeIds.has(id)&&Number(promptNode?.inputs?.segment_index)===Number(segmentIndex);}).sort((a,b)=>Number(b?.[0]||0)-Number(a?.[0]||0));
+            const matches=items.filter(item=>{const id=String(item?.[1]||"");const promptNode=item?.[2]?.[String(node.id)];return id&&!beforeIds.has(id)&&String(promptNode?.inputs?.project_id||"")===String(state.id)&&Number(promptNode?.inputs?.segment_index)===Number(segmentIndex);}).sort((a,b)=>Number(b?.[0]||0)-Number(a?.[0]||0));
             if(matches.length)return String(matches[0][1]);
+            // Native app.queuePrompt returns a boolean in both old and new
+            // frontends. A cached/fast prompt may already have left /queue.
+            const history=await readComfyHistory();
+            const finished=Object.entries(history||{}).filter(([id,entry])=>{const input=entry?.prompt?.[2]?.[String(node.id)]?.inputs;return !beforeIds.has(id)&&String(input?.project_id||"")===String(state.id)&&Number(input?.segment_index)===Number(segmentIndex);}).sort((a,b)=>Number(b[1]?.prompt?.[0]||0)-Number(a[1]?.prompt?.[0]||0));
+            if(finished.length)return String(finished[0][0]);
         }
         return "";
     };
     const restoreGenerationSelection=async()=>{state.selected_segment=Math.max(0,Math.min(generationOriginalIndex,state.segments.length-1));syncWidgets();await save();render();};
     const submitGenerationAt=async position=>{
+        clearInterval(generationHistoryTimer);generationHistoryTimer=0;generationPromptId="";
         const segmentIndex=generationQueueIndices[position];
         if(!Number.isInteger(segmentIndex))throw new Error("批量队列中的分镜索引无效");
-        state.selected_segment=segmentIndex;syncWidgets();await save();renderScenes();renderForm();
+        state.selected_segment=segmentIndex;syncWidgets();await save({throwOnError:true});renderScenes();renderForm();
         // Save responses and delayed UI events are allowed to refresh state,
         // but the hidden Comfy widget must be locked to this exact queue item.
         if(segmentWidget)segmentWidget.value=segmentIndex;
         node.setDirtyCanvas?.(true,true);
         setGenerationState("submitting",0,`正在提交实际分镜 ${segmentIndex+1}（批次 ${position+1}/${generationTotal}）· 0%`);
         const beforeIds=queuePromptIds(await readComfyQueue());
+        for(const id of Object.keys(await readComfyHistory()))beforeIds.add(id);
         const queued=await app.queuePrompt(0,1);
         generationPromptId=await resolveQueuedPromptId(segmentIndex,beforeIds,queued);
         if(!generationPromptId)throw new Error(`分镜 ${segmentIndex+1} 提交后未返回 prompt_id，已停止批量推进`);
         setGenerationState("running",0,`实际分镜 ${segmentIndex+1}（批次 ${position+1}/${generationTotal}）· 等待采样 0%`);
+        const promptId=generationPromptId;
+        // Recover completion/result events lost during submission or reconnect.
+        generationHistoryTimer=setInterval(()=>{void generationSucceeded({detail:{prompt_id:promptId}});},1500);
+        void generationSucceeded({detail:{prompt_id:promptId}});
     };
     const generationStarted = () => {if(ownsGeneration())setGenerationState("running",0,`实际分镜 ${activeSceneNumber()}（批次 ${Math.min(generationCompleted+1,generationTotal)}/${generationTotal}）· 等待采样 0%`);};
     const generationProgress = ({detail}) => {if(!ownsGeneration())return;const value=Number(detail?.value??0),maximum=Number(detail?.max??0),percent=maximum>0?Math.max(0,Math.min(100,value/maximum*100)):generationPercent;setGenerationState("running",percent,`实际分镜 ${activeSceneNumber()}（批次 ${Math.min(generationCompleted+1,generationTotal)}/${generationTotal}）· 采样 ${Math.round(percent)}%`);};
     const generationExecuting = ({detail}) => {if(!ownsGeneration())return;const executingNode=detail&&typeof detail==="object"&&"node" in detail?detail.node:detail;if(executingNode!==null)setGenerationState("running",generationPercent,`实际分镜 ${activeSceneNumber()}（批次 ${Math.min(generationCompleted+1,generationTotal)}/${generationTotal}）· ${generationPercent>0?`采样 ${Math.round(generationPercent)}%`:"准备采样 0%"}`);};
-    const generationSucceeded = async({detail}) => {if(!ownsGeneration()||generationAdvancing)return;const promptId=String(detail?.prompt_id||"");if(!promptId||promptId!==generationPromptId||completedPromptIds.has(promptId))return;completedPromptIds.add(promptId);generationAdvancing=true;const finishedIndex=generationQueueIndices[Math.min(generationCompleted,generationQueueIndices.length-1)];try{await captureHistoryResults(promptId,finishedIndex);try{const data=await jsonFetch(endpoint(state));state=data.project;state.results||=[];normalizeAudioTracks();normalizeSegments();if(state.settings?.auto_optimize&&selected().optimized_prompt)promptView="optimized";renderForm();renderResults();}catch{}setGenerationState("running",100,`实际分镜 ${finishedIndex+1}（批次 ${generationCompleted+1}/${generationTotal}）· 采样 100%`);generationCompleted=Math.min(generationTotal,generationCompleted+1);if(generationCompleted>=generationTotal){setGenerationState("success",100,`全部 ${generationTotal} 个分镜生成完成 · 100%`);await restoreGenerationSelection();}else{await submitGenerationAt(generationCompleted);}}catch(error){setGenerationState("error",generationPercent,`提交下一个分镜失败：${error.message}`);await restoreGenerationSelection().catch(()=>{});}finally{generationAdvancing=false;}};
-    const generationFailed = async({detail}) => {if(!ownsGeneration())return;const promptId=String(detail?.prompt_id||"");if(promptId&&generationPromptId&&promptId!==generationPromptId)return;setGenerationState("error",generationPercent,detail?.exception_message?`生成失败：${detail.exception_message}`:`实际分镜 ${activeSceneNumber()} 生成失败`);await restoreGenerationSelection().catch(()=>{});};
+    const generationSucceeded = async({detail}) => {
+        if(!ownsGeneration()||generationAdvancing)return;
+        const promptId=String(detail?.prompt_id||"");
+        if(!promptId||promptId!==generationPromptId||completedPromptIds.has(promptId))return;
+        generationAdvancing=true;
+        const finishedIndex=generationQueueIndices[Math.min(generationCompleted,generationQueueIndices.length-1)];
+        try{
+            let entry;
+            try{entry=(await readComfyHistory(promptId))?.[promptId];}catch{return;}
+            if(!ownsGeneration()||promptId!==generationPromptId||!entry)return;
+            const messages=entry.status?.messages||[];
+            const failure=messages.find(item=>item?.[0]==="execution_error"||item?.[0]==="execution_interrupted");
+            if(entry.status?.status_str==="error"||failure){await generationFailed({detail:{...failure?.[1],prompt_id:promptId}});return;}
+            if(entry.status?.completed!==true&&!messages.some(item=>item?.[0]==="execution_success"))return;
+            const added=await captureHistoryResults(promptId,finishedIndex,entry);
+            if(!added&&!collectVideoItems(entry.outputs||{}).length)notify("工作流已完成，但历史记录中没有找到视频文件",true);
+            completedPromptIds.add(promptId);
+            try{const data=await jsonFetch(endpoint(state));state=data.project;state.results||=[];normalizeAudioTracks();normalizeSegments();if(state.settings?.auto_optimize&&selected().optimized_prompt)promptView="optimized";renderForm();renderResults();}catch{}
+            setGenerationState("running",100,`实际分镜 ${finishedIndex+1}（批次 ${generationCompleted+1}/${generationTotal}）· 采样 100%`);
+            generationCompleted=Math.min(generationTotal,generationCompleted+1);
+            if(generationCompleted>=generationTotal){setGenerationState("success",100,`全部 ${generationTotal} 个分镜生成完成 · 100%`);await restoreGenerationSelection();}
+            else{await submitGenerationAt(generationCompleted);}
+        }catch(error){setGenerationState("error",generationPercent,`生成记录保存或下一分镜提交失败：${error.message}`);await restoreGenerationSelection().catch(()=>{});}
+        finally{generationAdvancing=false;}
+    };
+    const generationFailed = async({detail}) => {if(!ownsGeneration())return;const promptId=String(detail?.prompt_id||"");if(!promptId||promptId!==generationPromptId)return;setGenerationState("error",generationPercent,detail?.exception_message?`生成失败：${detail.exception_message}`:`实际分镜 ${activeSceneNumber()} 生成失败`);await restoreGenerationSelection().catch(()=>{});};
     function renderForm() {
         const segment = selected();
         const activeModel=String(state.settings.model_profile||"h3");

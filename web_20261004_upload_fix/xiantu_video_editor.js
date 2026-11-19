@@ -2,6 +2,32 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { mountVideoPromptOptimizer } from "./xiantu_video_prompt_optimizer.js";
 
+const connectSelfLiftContinuation = (nodes, sampler, continuationId, allocateId) => {
+    const inputs = sampler.inputs;
+    const latentLink = inputs.latent_image;
+    const existing = Array.isArray(latentLink) ? nodes[String(latentLink[0])] : null;
+    const bridgeType = "XiantuH3ContinuationDataBridge";
+    // An explicit canvas bridge is reordered after continuation by our backend.
+    // Otherwise the submitted prompt needs its own data bridge: SelfLift only
+    // accepts a plain noise_mask, while H3 continuation carries AV masks.
+    if (existing?.class_type === bridgeType && Number(latentLink[1]) === 2
+        && inputs.model?.[0] === latentLink[0] && Number(inputs.model?.[1]) === 0
+        && inputs.positive?.[0] === latentLink[0] && Number(inputs.positive?.[1]) === 1) {
+        inputs.positive = [continuationId, 0];
+        inputs.latent_image = [continuationId, 1];
+        inputs.model = [continuationId, 3];
+        return;
+    }
+    const bridgeId = allocateId();
+    const bridgeInputs = {model:[continuationId, 3],positive:[continuationId, 0],latent:[continuationId, 1]};
+    if (Array.isArray(inputs.model_hires)) bridgeInputs.model_hires = [...inputs.model_hires];
+    nodes[bridgeId] = {class_type:bridgeType,inputs:bridgeInputs};
+    inputs.model = [bridgeId, 0];
+    inputs.positive = [bridgeId, 1];
+    inputs.latent_image = [bridgeId, 2];
+    if (bridgeInputs.model_hires) inputs.model_hires = [bridgeId, 3];
+};
+
 const NODE = "XiantuVideoEditorWorkbench";
 const compactDirectorState = (state) => ({
     ...state,
@@ -1058,6 +1084,7 @@ function createWorkbench(node) {
         shotId: String(segment.shotId || ""),
         sourceStart: Math.max(0, sanitizeEditNumber(segment.sourceStart)),
         sourceEnd: sanitizeEditEnd(segment.sourceEnd),
+        audioRemoved: Boolean(segment.audioRemoved),
     })).filter((segment) => segment.shotId) : [];
     let audioEditSegments = Array.isArray(initialState.audioEditSegments) ? initialState.audioEditSegments.map((segment) => ({
         id: String(segment.id || makeId()),
@@ -1889,17 +1916,28 @@ function createWorkbench(node) {
     const importSheet = async (file) => {
         const button = q("[data-upload-sheet]");
         if (!file) return;
-        const previousSheetState = {
-            resolution: structuredClone(resolutionState), filenamePrefix, continuityOverlapFrames,
-            defaults: structuredClone(functionSelectionDefaults), scopes: structuredClone(functionSelectionScopes),
-            samplerPairs: structuredClone(samplingSamplerPairs),
+        if (button.disabled) return;
+        const originalText = button.dataset.originalText || button.textContent;
+        button.dataset.originalText = originalText;
+        clearTimeout(button._xveStatusTimer);
+        button.disabled = true;
+        button.textContent = "读取表格…";
+        if (q("[data-error-title]").textContent === "表格导入失败") showDirectorError();
+        let previousSheetState;
+        // These are serialized sheet settings. JSON also accepts the reactive
+        // proxies used by current ComfyUI frontends; structuredClone rejects them.
+        const copySheetSettings = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+        try {
+        previousSheetState = {
+            resolution: copySheetSettings(resolutionState), filenamePrefix, continuityOverlapFrames,
+            defaults: copySheetSettings(functionSelectionDefaults), scopes: copySheetSettings(functionSelectionScopes),
+            samplerPairs: copySheetSettings(samplingSamplerPairs),
             nodes: (node.graph || app.graph)?._nodes?.map((item) => ({
-                item, mode: item.mode, tag: structuredClone(item.properties?.[FUNCTION_TAG]),
+                item, mode: item.mode, tag: copySheetSettings(item.properties?.[FUNCTION_TAG]),
                 widgets: (item.widgets || []).map((widget) => [widget, widget.value]),
             })) || [],
-            groups: structuredClone((node.graph || app.graph)?.extra?.[GROUP_TAGS]),
+            groups: copySheetSettings((node.graph || app.graph)?.extra?.[GROUP_TAGS]),
         };
-        try {
             const rows = await readSheetRows(file);
             if (rows.length < 2) throw new Error("表格没有分镜数据");
             const headers = rows[0].map((value) => String(value).trim());
@@ -2018,6 +2056,7 @@ function createWorkbench(node) {
                 }
             };
             for (let index = 0; index < dataRows.length; index += 1) {
+                button.textContent = `导入分镜 ${index + 1}/${dataRows.length}`;
                 const row = dataRows[index];
                 const rowNumber = index + 2;
                 const sheetNumber = valueAt(row, "分镜编号", "序号", "编号", "镜头编号");
@@ -2076,6 +2115,7 @@ function createWorkbench(node) {
             renderShots(); loadShot(); renderTimeline(); save();
             sheetButtonStatus(button, `已导入 ${shots.length} 条`);
         } catch (error) {
+            if (previousSheetState) {
             Object.assign(resolutionState, previousSheetState.resolution);
             filenamePrefix = previousSheetState.filenamePrefix;
             continuityOverlapFrames = previousSheetState.continuityOverlapFrames;
@@ -2093,8 +2133,13 @@ function createWorkbench(node) {
             else { graph.extra ||= {}; graph.extra[GROUP_TAGS] = previousSheetState.groups; }
             graph?.change?.();
             graph?.setDirtyCanvas?.(true, true);
+            }
             console.error("视频导演台表格导入失败", error);
             sheetButtonStatus(button, String(error?.message || error), true);
+            showDirectorError(String(error?.message || error));
+            q("[data-error-title]").textContent = "表格导入失败";
+        } finally {
+            button.disabled = false;
         }
     };
     const renderLibrary = () => {
@@ -2260,6 +2305,7 @@ function createWorkbench(node) {
             audio.sourceEnd = linkedVideo.sourceEnd;
         }
         for (const segment of videoEditSegments) {
+            if (segment.audioRemoved) continue;
             if (audioEditSegments.some((audio) => String(audio.videoSegmentId) === String(segment.id))) continue;
             audioEditSegments.push({ id: makeId(), videoSegmentId: segment.id, shotId: segment.shotId, sourceStart: segment.sourceStart, sourceEnd: segment.sourceEnd, timelineStart: 0, linked: true, muted: false, volume: 1, fadeIn: 0, fadeOut: 0 });
         }
@@ -2367,6 +2413,7 @@ function createWorkbench(node) {
                 activeShotId = shot.id;
                 timelinePlayheadSeconds = item.start + localSeconds;
                 renderShots(); loadShot(); syncEditToolbar(); save();
+                q(".xve-timeline").focus({preventScroll:true});
                 let resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "after");
                 if (resultIndex < 0) resultIndex = results.findLastIndex((result) => String(result.shotId) === String(shot.id) && resultKind(result) === "before");
                 q("[data-playhead]").style.left = `${timelinePlayheadSeconds * timelineScale}px`;
@@ -2397,6 +2444,7 @@ function createWorkbench(node) {
                 activeShotId = shot.id;
                 timelinePlayheadSeconds = item.start + Math.max(0, Math.min(item.duration, (event.clientX - clip.getBoundingClientRect().left) / Math.max(1, clip.getBoundingClientRect().width) * item.duration));
                 renderShots(); loadShot(); renderTimeline(); syncEditToolbar(); save();
+                q(".xve-timeline").focus({preventScroll:true});
             };
             clip.onpointerdown = (event) => {
                 if (event.button !== 0 || event.target.closest("[data-trim-edge]")) return;
@@ -2670,10 +2718,19 @@ function createWorkbench(node) {
         const videoSegment = selectedVideoEditSegment();
         const audioSegment = selectedAudioEditSegment();
         if (videoSegment) {
+            const audioLayout = audioTimelineLayout();
+            for (const segment of audioEditSegments) {
+                if (!segment.linked || String(segment.videoSegmentId) !== String(videoSegment.id)) continue;
+                segment.timelineStart = audioLayout.find((item) => String(item.segment.id) === String(segment.id))?.start || 0;
+                segment.linked = false;
+            }
             videoEditSegments = videoEditSegments.filter((segment) => String(segment.id) !== String(videoSegment.id));
-            audioEditSegments = audioEditSegments.filter((segment) => !(segment.linked && String(segment.videoSegmentId) === String(videoSegment.id)));
             if (!videoEditSegments.some((segment) => String(segment.shotId) === String(videoSegment.shotId))) excludedTimelineShotIds.add(String(videoSegment.shotId));
-        } else if (audioSegment) audioEditSegments = audioEditSegments.filter((segment) => String(segment.id) !== String(audioSegment.id));
+        } else if (audioSegment) {
+            const video = videoEditSegments.find((segment) => String(segment.id) === String(audioSegment.videoSegmentId));
+            if (video) video.audioRemoved = true;
+            audioEditSegments = audioEditSegments.filter((segment) => String(segment.id) !== String(audioSegment.id));
+        } else return;
         activeEditSelection = null;
         renderTimeline(); syncEditToolbar(); save();
     };
@@ -4362,9 +4419,7 @@ function createWorkbench(node) {
                             previous_latent: [previousCacheId, 0],
                         },
                     };
-                    sampler.inputs.positive = [continuationId, 0];
-                    sampler.inputs.latent_image = [continuationId, 1];
-                    sampler.inputs.model = [continuationId, 3];
+                    connectSelfLiftContinuation(nodes, sampler, continuationId, allocateId);
                     continuationCount += 1;
                 }
                 installed = true;
@@ -5110,6 +5165,20 @@ function createWorkbench(node) {
         root.remove(); node._xveWorkbench = null;
     };
     q("[data-close-workbench]").onclick = close;
+    const editTimeline = q(".xve-timeline");
+    editTimeline.tabIndex = -1;
+    const isEditField = (target) => Boolean(target?.isContentEditable || target?.closest?.("input,textarea,select,[contenteditable]:not([contenteditable='false'])"));
+    editTimeline.addEventListener("pointerdown", (event) => {
+        if (!isEditField(event.target)) editTimeline.focus({preventScroll:true});
+    }, true);
+    root.addEventListener("keydown", (event) => {
+        if (event.key !== "Delete" || event.isComposing || event.ctrlKey || event.metaKey || event.altKey
+            || !editTimeline.contains(event.target) || isEditField(event.target)
+            || (!selectedVideoEditSegment() && !selectedAudioEditSegment())) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) deleteSelectedEditSegment();
+    }, true);
     root.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
         if (promptOptimizer.close()) {
