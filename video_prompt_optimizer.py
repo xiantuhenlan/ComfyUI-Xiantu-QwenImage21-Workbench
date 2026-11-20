@@ -522,6 +522,26 @@ def _validate_h3_prompt(mode, prompt, duration, dialogue_source, material_map, p
     return {"errors": errors, "warnings": warnings}
 
 
+def _official_skill_text(mode):
+    bundle = json.loads(Path(__file__).with_name("h3_prompt_writing.json").read_text(encoding="utf-8"))
+    guide = "references/ref-en.txt" if str(mode).upper() in {"REF2VA", "SWAPVA", "EDITVA"} else "references/base-en.txt"
+    return ("OFFICIAL H3 PROMPT-WRITING SKILL\n" + bundle["files"]["SKILL.md"]
+            + "\nOFFICIAL MODE GUIDE: " + guide + "\n" + bundle["files"][guide]
+            + "\nEND OFFICIAL GUIDE. Examples illustrate the format; write this user's actual scene, not the examples. ")
+
+
+def _has_visual_prompt_body(prompt):
+    """Recognize empty protocol scaffolding before any deterministic tag repairs."""
+    text = str(prompt or "").strip()
+    headings = r"subject_definitions|summary|retention_analysis|detailed_description|integrated_multimodal_description|overall_soundscape|non_diegetic_music"
+    match = re.search(r"(?:detailed_description|integrated_multimodal_description)\s*:", text, flags=re.I)
+    body = text[match.end():] if match else text
+    body = re.split(rf"(?:{headings})\s*:", body, maxsplit=1, flags=re.I)[0]
+    body = re.sub(r"\[Shot\s+\d+\](?:\s+At\s+\d{2}:\d{2}\.\d{3})?|<(?:Subject|Picture|Video|Audio)\s+\d+>", "", body, flags=re.I)
+    body = re.sub(r"\b(?:N/A|none|null|TBD)\b|待填写|待补充", "", body, flags=re.I)
+    return bool(re.search(r"[A-Za-z\u3400-\u9fff]", body))
+
+
 def _run_optimizer(payload):
     global _active_task
     with _OPTIMIZER_LOCK:
@@ -571,7 +591,7 @@ def _run_optimizer(payload):
                     + (f"Preserve and explicitly use the official material tag {continuation_tag} as the continuation source. " if continuation_tag else "")
                     + "Do not ask the user to insert a continuation tag and do not print an internal continuation-evidence label in the final prompt. "
                 )
-            official_contract = _official_h3_prompt_contract(mode, duration, output_language)
+            official_contract = _official_skill_text(mode) if not custom_skill_content else _official_h3_prompt_contract(mode, duration, output_language)
             section_rule = (
                 "Use exactly these six lowercase section headings in order: subject_definitions:, summary:, retention_analysis:, detailed_description:, overall_soundscape:, non_diegetic_music:."
                 if mode == "REF2VA" else
@@ -616,7 +636,10 @@ def _run_optimizer(payload):
                 "Describe observable action progression and separate subject motion, camera motion, and background motion. "
                 "Apply the director_context camera request, composition, aspect ratio, timing, and enabled LoRA purposes without printing irrelevant sampler settings. Never invent a material or claim to hear audio. "
                 "For audio references, preserve the alias and state its intended voice/sound role. Return only one final, "
-                f"production-ready {output_label} prompt with timing that stays inside the target duration. Return exactly one prompt in the selected output language. No alternate-language copy, Markdown, or commentary."
+                f"production-ready {output_label} prompt with timing that stays inside the target duration. Return exactly one prompt in the selected output language. No alternate-language copy, Markdown, or commentary. "
+                "Write each section heading on its own line and fill its body. Never return only headings, labels, or a blank schema. "
+                "Keep the user's concrete subjects, actions, objects, and scene requirements in the visual timeline; elaborate them instead of replacing them with protocol labels. "
+                f"The selected output language is {output_label}; this overrides the guide's English-body default, while field names remain unchanged."
             )
             user_content = [{"type": "text", "text": f"Original director prompt:\n{prompt}"}]
             user_content.append({"type": "text", "text": "Authoritative material-role manifest:\n" + json.dumps(materials, ensure_ascii=False)})
@@ -697,12 +720,16 @@ def _run_optimizer(payload):
                 heading_index = reasoning.lower().find(first_heading)
                 if heading_index >= 0:
                     text = reasoning[heading_index:].strip()
-            if not text:
-                logging.warning("[闲兔提示词优化] 模型首次返回空正文，自动关闭思考并重试一次；模型=%s", model_path.name)
+            if not _has_visual_prompt_body(text):
+                logging.warning("[闲兔提示词优化] 模型首次返回空正文或空格式模板，保留原文并重试一次；模型=%s", model_path.name)
                 retry_payload = dict(completion_payload)
                 retry_payload["messages"] = messages + [{
                     "role": "user",
-                    "content": "Return the final prompt now. Do not output analysis or reasoning. Start directly with the required first section heading. /no_think",
+                    "content": ("The previous response had no usable visual timeline. Rewrite the ORIGINAL director prompt supplied above, "
+                                "preserving its concrete subjects, actions, scene, and all material roles. "
+                                "Fill the required sections with actual scene descriptions; detailed_description or integrated_multimodal_description "
+                                "must describe the user's action progression and camera, not merely [Shot 1] or field names. "
+                                "Do not output analysis or reasoning. Return the final prompt directly. /no_think"),
                 }]
                 retry_payload["temperature"] = 0.1
                 retry_payload["max_tokens"] = min(4096, max(1536, int(completion_payload["max_tokens"])))
@@ -713,8 +740,8 @@ def _run_optimizer(payload):
                 )
                 retry_message = retry_result.get("choices", [{}])[0].get("message", {})
                 text = str(retry_message.get("content") or "").strip()
-            if not text:
-                raise ValueError("本地多模态模型没有返回可用提示词。")
+            if not _has_visual_prompt_body(text):
+                raise ValueError("本地模型只返回空模板，未生成镜头正文；已保留原提示词，请重试优化。")
             _storyboard_progress(task_id, f"正在整理{'英文' if output_language == 'en' else '中文'}提示词格式", 82)
             dialogues = original_dialogues
             material_map = [

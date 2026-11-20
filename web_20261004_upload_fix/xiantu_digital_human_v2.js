@@ -148,7 +148,7 @@ function studio(node) {
     const promptEditor = $(root, "[data-original]");
     let state = null, decoded = null, zoom = 1, showMarkers = true, saving = 0, playFrame = 0, zoomFrame = 0, audioSeekToken = 0, audioSeeking = false;
     let audioContext = null, localAudioUrl = "";
-    let pinnedTime = 0, selectedCutIndex = -1, promptRange = null, promptView = "original", resultView = "after", previewResultId = "", generationActive = false, generationPercent = 0, generationResetTimer = 0, generationPulseTimer = 0, generationOwnerToken = "", generationHistoryTimer = 0;
+    let pinnedTime = 0, selectedCutIndex = -1, promptRange = null, promptView = "original", resultView = "after", previewResultId = "", generationActive = false, generationStopRequested = false, generationPercent = 0, generationResetTimer = 0, generationPulseTimer = 0, generationOwnerToken = "", generationHistoryTimer = 0;
     let projectSaveQueue = Promise.resolve();
     let assetMode = false, assetFiles = [], assetCategory = "all", assetTargetSegmentIndex = 0, pendingRefSegmentIndex = 0;
     const refFields = {current:"refs"};
@@ -163,8 +163,9 @@ function studio(node) {
         const bar=$(root,"[data-generation-bar]"),label=$(root,"[data-generation-text]");
         bar.style.width=`${generationPercent}%`;
         label.textContent=message||`${phase==="running"?"正在生成":phase==="submitting"?"正在提交":phase==="success"?"生成完成":phase==="error"?"生成失败":"准备生成"} · ${Math.round(generationPercent)}%`;
-        if(phase==="submitting"){generationActive=true;generateButton.disabled=true;generateButton.textContent="⏳ 正在提交…";}
-        else if(phase==="running"){generationActive=true;generateButton.disabled=true;generateButton.textContent=`■ 生成中 ${Math.round(generationPercent)}%`;}
+        if(phase==="stopping"){generationActive=true;generateButton.disabled=true;generateButton.textContent="正在停止…";}
+        else if(phase==="submitting"){generationActive=true;generateButton.disabled=false;generateButton.textContent="■ 停止生成";}
+        else if(phase==="running"){generationActive=true;generateButton.disabled=generationStopRequested;generateButton.textContent=generationStopRequested?"正在停止…":"■ 停止生成";}
         else if(phase==="success"){generationActive=false;if(globalThis.__xiantuDh2BatchOwner===generationOwnerToken)globalThis.__xiantuDh2BatchOwner="";generateButton.disabled=false;generateButton.textContent="✓ 生成完成（可再次生成）";}
         else if(phase==="error"){generationActive=false;if(globalThis.__xiantuDh2BatchOwner===generationOwnerToken)globalThis.__xiantuDh2BatchOwner="";generateButton.disabled=false;generateButton.textContent="⚠ 生成失败（点击重试）";}
         else{generationActive=false;generateButton.disabled=false;generateButton.textContent="▶ 开始生成";}
@@ -447,11 +448,41 @@ function studio(node) {
         return "";
     };
     const restoreGenerationSelection=async()=>{state.selected_segment=Math.max(0,Math.min(generationOriginalIndex,state.segments.length-1));syncWidgets();await save();render();};
+    const checkGenerationStop=()=>{if(generationStopRequested)throw new Error("用户停止生成");};
+    const stopGeneration=async()=>{
+        generationStopRequested=true;
+        clearInterval(generationHistoryTimer);generationHistoryTimer=0;
+        setGenerationState("stopping",generationPercent,"正在停止生成…");
+        const promptId=generationPromptId;
+        // Submission may still be saving or awaiting a prompt id. Its own
+        // checkpoints finish cancellation once that pending request resolves.
+        if(!promptId)return;
+        const response=await api.fetchApi("/queue");
+        if(!response.ok)throw new Error("读取待停止任务失败");
+        let queue=await response.json();
+        const pending=(queue.queue_pending||[]).some(item=>String(item?.[1])===promptId);
+        if(pending){
+            const removed=await api.fetchApi("/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({delete:[promptId]})});
+            if(!removed.ok)throw new Error("取消排队任务失败");
+            const latest=await api.fetchApi("/queue");
+            if(!latest.ok)throw new Error("读取任务停止状态失败");
+            queue=await latest.json();
+        }
+        const running=(queue.queue_running||[]).some(item=>String(item?.[1])===promptId);
+        if(running){
+            const interrupted=await api.fetchApi("/interrupt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt_id:promptId})});
+            if(!interrupted.ok)throw new Error("停止当前任务失败");
+        }
+        setGenerationState("idle",generationPercent,"已停止生成");
+        if(globalThis.__xiantuDh2BatchOwner===generationOwnerToken)globalThis.__xiantuDh2BatchOwner="";
+        await restoreGenerationSelection().catch(()=>{});
+    };
     const submitGenerationAt=async position=>{
+        checkGenerationStop();
         clearInterval(generationHistoryTimer);generationHistoryTimer=0;generationPromptId="";
         const segmentIndex=generationQueueIndices[position];
         if(!Number.isInteger(segmentIndex))throw new Error("批量队列中的分镜索引无效");
-        state.selected_segment=segmentIndex;syncWidgets();await save({throwOnError:true});renderScenes();renderForm();
+        state.selected_segment=segmentIndex;syncWidgets();await save({throwOnError:true});renderScenes();renderForm();checkGenerationStop();
         // Save responses and delayed UI events are allowed to refresh state,
         // but the hidden Comfy widget must be locked to this exact queue item.
         if(segmentWidget)segmentWidget.value=segmentIndex;
@@ -459,9 +490,11 @@ function studio(node) {
         setGenerationState("submitting",0,`正在提交实际分镜 ${segmentIndex+1}（批次 ${position+1}/${generationTotal}）· 0%`);
         const beforeIds=queuePromptIds(await readComfyQueue());
         for(const id of Object.keys(await readComfyHistory()))beforeIds.add(id);
+        checkGenerationStop();
         const queued=await app.queuePrompt(0,1);
         generationPromptId=await resolveQueuedPromptId(segmentIndex,beforeIds,queued);
         if(!generationPromptId)throw new Error(`分镜 ${segmentIndex+1} 提交后未返回 prompt_id，已停止批量推进`);
+        if(generationStopRequested){await stopGeneration();return;}
         setGenerationState("running",0,`实际分镜 ${segmentIndex+1}（批次 ${position+1}/${generationTotal}）· 等待采样 0%`);
         const promptId=generationPromptId;
         // Recover completion/result events lost during submission or reconnect.
@@ -472,7 +505,7 @@ function studio(node) {
     const generationProgress = ({detail}) => {if(!ownsGeneration())return;const value=Number(detail?.value??0),maximum=Number(detail?.max??0),percent=maximum>0?Math.max(0,Math.min(100,value/maximum*100)):generationPercent;setGenerationState("running",percent,`实际分镜 ${activeSceneNumber()}（批次 ${Math.min(generationCompleted+1,generationTotal)}/${generationTotal}）· 采样 ${Math.round(percent)}%`);};
     const generationExecuting = ({detail}) => {if(!ownsGeneration())return;const executingNode=detail&&typeof detail==="object"&&"node" in detail?detail.node:detail;if(executingNode!==null)setGenerationState("running",generationPercent,`实际分镜 ${activeSceneNumber()}（批次 ${Math.min(generationCompleted+1,generationTotal)}/${generationTotal}）· ${generationPercent>0?`采样 ${Math.round(generationPercent)}%`:"准备采样 0%"}`);};
     const generationSucceeded = async({detail}) => {
-        if(!ownsGeneration()||generationAdvancing)return;
+        if(!ownsGeneration()||generationStopRequested||generationAdvancing)return;
         const promptId=String(detail?.prompt_id||"");
         if(!promptId||promptId!==generationPromptId||completedPromptIds.has(promptId))return;
         generationAdvancing=true;
@@ -489,14 +522,14 @@ function studio(node) {
             if(!added&&!collectVideoItems(entry.outputs||{}).length)notify("工作流已完成，但历史记录中没有找到视频文件",true);
             completedPromptIds.add(promptId);
             try{const data=await jsonFetch(endpoint(state));state=data.project;state.results||=[];normalizeAudioTracks();normalizeSegments();if(state.settings?.auto_optimize&&selected().optimized_prompt)promptView="optimized";renderForm();renderResults();}catch{}
-            setGenerationState("running",100,`实际分镜 ${finishedIndex+1}（批次 ${generationCompleted+1}/${generationTotal}）· 采样 100%`);
+            if(generationStopRequested)return;setGenerationState("running",100,`实际分镜 ${finishedIndex+1}（批次 ${generationCompleted+1}/${generationTotal}）· 采样 100%`);
             generationCompleted=Math.min(generationTotal,generationCompleted+1);
             if(generationCompleted>=generationTotal){setGenerationState("success",100,`全部 ${generationTotal} 个分镜生成完成 · 100%`);await restoreGenerationSelection();}
             else{await submitGenerationAt(generationCompleted);}
-        }catch(error){setGenerationState("error",generationPercent,`生成记录保存或下一分镜提交失败：${error.message}`);await restoreGenerationSelection().catch(()=>{});}
+        }catch(error){if(generationStopRequested){setGenerationState("idle",generationPercent,"已停止生成");await restoreGenerationSelection().catch(()=>{});return;}setGenerationState("error",generationPercent,`生成记录保存或下一分镜提交失败：${error.message}`);await restoreGenerationSelection().catch(()=>{});}
         finally{generationAdvancing=false;}
     };
-    const generationFailed = async({detail}) => {if(!ownsGeneration())return;const promptId=String(detail?.prompt_id||"");if(!promptId||promptId!==generationPromptId)return;setGenerationState("error",generationPercent,detail?.exception_message?`生成失败：${detail.exception_message}`:`实际分镜 ${activeSceneNumber()} 生成失败`);await restoreGenerationSelection().catch(()=>{});};
+    const generationFailed = async({detail}) => {if(!ownsGeneration()||generationStopRequested)return;const promptId=String(detail?.prompt_id||"");if(!promptId||promptId!==generationPromptId)return;setGenerationState("error",generationPercent,detail?.exception_message?`生成失败：${detail.exception_message}`:`实际分镜 ${activeSceneNumber()} 生成失败`);await restoreGenerationSelection().catch(()=>{});};
     function renderForm() {
         const segment = selected();
         const activeModel=String(state.settings.model_profile||"h3");
@@ -742,7 +775,12 @@ function studio(node) {
         if(ids.length)graph.setDirtyCanvas?.(true,true);return ids.length;
     };
     generateButton.onclick=async()=>{
-        if(generationActive)return;
+        if(generationActive){
+            if(generationStopRequested)return;
+            try{await stopGeneration();}catch(error){generationStopRequested=false;setGenerationState("running",generationPercent,`停止失败：${error.message}`);notify(`停止失败：${error.message}`,true);}
+            return;
+        }
+        generationStopRequested=false;
         const selectedIndices=state.segments.map((segment,index)=>segment.generate_selected!==false?index:-1).filter(index=>index>=0);
         if(!selectedIndices.length)return notify("请先勾选至少一个要生成的分镜",true);
         generationOwnerToken=crypto.randomUUID();globalThis.__xiantuDh2BatchOwner=generationOwnerToken;
@@ -750,8 +788,13 @@ function studio(node) {
         try{
             const removed=removeLegacyOptimizerLinks();
             await submitGenerationAt(0);
+            if(generationStopRequested)return;
             notify(removed?`已移除旧的外部 Qwen 回路线；当前只提交第 1 个，完成后再提交下一个`:`当前只提交第 1 个，完成后再提交下一个`);
-        }catch(error){await restoreGenerationSelection().catch(()=>{});setGenerationState("error",generationPercent,`提交失败：${error.message}`);notify(`生成提交失败：${error.message}`,true);}
+        }catch(error){
+            await restoreGenerationSelection().catch(()=>{});
+            if(generationStopRequested){setGenerationState("idle",generationPercent,"已停止生成");if(globalThis.__xiantuDh2BatchOwner===generationOwnerToken)globalThis.__xiantuDh2BatchOwner="";}
+            else{setGenerationState("error",generationPercent,`提交失败：${error.message}`);notify(`生成提交失败：${error.message}`,true);}
+        }
     };
     $$(root,"[data-result-tab]").forEach(tab=>tab.onclick=()=>{resultView=tab.dataset.resultTab;previewResultId="";renderResults();});
     $(root,"[data-result-all]").onchange=event=>{state.results.filter(record=>resultKind(record)===resultView).forEach(record=>record.selected=event.target.checked);save();renderResults();};

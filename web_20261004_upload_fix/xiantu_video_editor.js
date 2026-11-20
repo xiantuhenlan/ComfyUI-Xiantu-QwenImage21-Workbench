@@ -665,8 +665,15 @@ const parseCsv = (text) => {
     if (cell || row.length) { row.push(cell.replace(/\r$/, "")); rows.push(row); }
     return rows.filter((item) => item.some((value) => String(value).trim()));
 };
-const downloadCsv = (filename, rows) => {
-    const blob = new Blob(["\uFEFF", rows.map((row) => row.map(csvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+const downloadXlsx = async (filename, rows) => {
+    const response = await api.fetchApi("/xiantu/video-editor/export-sheet", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }),
+    });
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `导出表格失败（HTTP ${response.status}）`);
+    }
+    const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url; anchor.download = filename; anchor.click();
@@ -682,6 +689,7 @@ const persistedAssetUrl = (asset) => {
 function createWorkbench(node) {
     const runtime = node._xveGenerationRuntime ||= { busy: false, buttonText: "▶ 开始生成", progress: null, listeners: new Set(), hardware: null };
     if (!(runtime.listeners instanceof Set)) runtime.listeners = new Set();
+    if (!(runtime.resultListeners instanceof Set)) runtime.resultListeners = new Set();
     runtime.startedAt = Number.isFinite(runtime.startedAt) ? runtime.startedAt : null;
     runtime.elapsedMs = Number.isFinite(runtime.elapsedMs) ? runtime.elapsedMs : Math.max(0, Number(node.properties?.xiantuLastGenerationElapsedMs) || 0);
     const root = document.createElement("div");
@@ -1853,7 +1861,7 @@ function createWorkbench(node) {
         clearTimeout(button._xveStatusTimer);
         button._xveStatusTimer = setTimeout(() => { button.textContent = original; button.style.color = ""; }, failed ? 5000 : 2500);
     };
-    const downloadSheet = () => {
+    const downloadSheet = async () => {
         updatePrompt();
         const { width, height } = resolutionFor();
         const resolutionLabel = `${Number(resolutionState.megapixels).toFixed(1)} MP · ${width} × ${height}`;
@@ -1903,7 +1911,7 @@ function createWorkbench(node) {
                 index === 0 ? JSON.stringify(functionConfig) : "",
             ];
         })];
-        downloadCsv(`闲兔视频导演台_${new Date().toISOString().slice(0, 10)}.csv`, rows);
+        await downloadXlsx(`闲兔视频导演台_${new Date().toISOString().slice(0, 10)}.xlsx`, rows);
         sheetButtonStatus(q("[data-download-sheet]"), `已下载 ${shots.length} 条`);
     };
     const readSheetRows = async (file) => {
@@ -3436,10 +3444,10 @@ function createWorkbench(node) {
     };
     window.addEventListener("xiantu-function-tags-changed", refreshMarkedNodes);
     const sheetFileInput = q("[data-sheet-file]");
-    q("[data-download-sheet]").onclick = () => {
+    q("[data-download-sheet]").onclick = async () => {
         if (q("[data-error-title]").textContent === "表格导出失败") showDirectorError();
         try {
-            downloadSheet();
+            await downloadSheet();
         } catch (error) {
             console.error("视频导演台表格导出失败", error);
             sheetButtonStatus(q("[data-download-sheet]"), String(error?.message || error), true);
@@ -4135,6 +4143,14 @@ function createWorkbench(node) {
             return record;
         }
     };
+    const publishGeneratedResults = (shot, records, showPreview) => {
+        const detail = { source: root, shotId: shot.id, records: records.map((record) => ({ ...record })),
+            lastOutput: shot.lastOutput ? { ...shot.lastOutput } : null, showPreview };
+        for (const listener of runtime.resultListeners) {
+            try { listener(detail); }
+            catch (error) { console.warn("同步重新打开的工作台视频列表失败", error); }
+        }
+    };
     const ingestHistoryVideos = async (history, shot, { showPreview = false } = {}) => {
         const rawVideos = outputVideosFromHistory(history);
         // Publish valid VHS outputs immediately. Filename cleanup runs in the
@@ -4195,6 +4211,8 @@ function createWorkbench(node) {
         }
         renderResults();
         save();
+        publishGeneratedResults(shot, results.filter((item) => String(item.shotId) === String(shot.id)
+            && String(item.generationPromptId || "") === generationPromptId), showPreview);
         historyVideos.forEach((record) => {
             void finalizeVideoNameWithRetry(record).then((finalized) => {
                 const kind = resultKind(record);
@@ -4204,12 +4222,39 @@ function createWorkbench(node) {
                 if (!current || !applyFinalizedRecord(current, finalized)) return;
                 renderResults();
                 save();
+                publishGeneratedResults(shot, [current], false);
             }).catch((error) => {
                 console.warn(`分镜“${shot.title || "未命名"}”视频文件名暂未整理，保留原文件播放`, error);
             });
         });
         return { historyVideos, stageOutputs };
     };
+    const receiveGeneratedResults = (detail) => {
+        if (detail.source === root || !root.isConnected) return;
+        const target = shots.find((shot) => String(shot.id) === String(detail.shotId));
+        if (!target) return;
+        let preferred = null;
+        for (const record of detail.records) {
+            const kind = resultKind(record);
+            const index = results.findIndex((item) => String(item.shotId) === String(record.shotId) && resultKind(item) === kind
+                && (record.generationPromptId ? String(item.generationPromptId || "") === String(record.generationPromptId)
+                    : sameOutputLocation(item, record)));
+            const updated = { ...record, selected: index >= 0 ? results[index].selected : record.selected };
+            if (index >= 0) results[index] = updated; else results.push(updated);
+            if (!preferred || kind === "after") preferred = updated;
+        }
+        if (preferred && (!target.lastPromptId || String(target.lastPromptId) === String(preferred.generationPromptId))) {
+            target.lastOutput = detail.lastOutput ? { ...detail.lastOutput } : target.lastOutput;
+            target.lastPromptId = preferred.generationPromptId || target.lastPromptId;
+        }
+        if (detail.showPreview && preferred) {
+            resultView = resultKind(preferred); previewResult = preferred;
+            video.pause(); image.hidden = true; empty.hidden = true; video.hidden = false;
+            video.src = preferred.url; video.load();
+        }
+        renderResults(); save();
+    };
+    runtime.resultListeners.add(receiveGeneratedResults);
     const reconcileStoredResultNames = async () => {
         let changed = false;
         for (let index = results.length - 1; index >= 0; index -= 1) {
@@ -4818,6 +4863,12 @@ function createWorkbench(node) {
                 const preparationSteps = 18;
                 await reportPreparationStep(1, preparationSteps, "读取分镜任务", shot.title || `分镜 ${index + 1}`);
                 activeShotId = shot.id;
+                await promptOptimizer.beforeGenerate(shot, (detail) => setGenerationProgress({
+                    title: "优化提示词", actionDetail: [detail.stage, detail.detail].filter(Boolean).join(" · "),
+                    batchDetail: `分镜 ${index + 1}/${jobs.length}`, percent: runtimeOverallPercent(1),
+                    phase: "prepare", phasePercent: Number(detail.percent) || 0,
+                }));
+                if (runtime.cancelRequested) throw new Error("用户停止生成");
                 applyShotFunctionSelections(shot);
                 syncSelfLiftCanvasBridges(node.graph || app.graph, node.id, useAutomaticCompatibility);
                 await reportPreparationStep(2, preparationSteps, "切换当前分镜", shot.title || `分镜 ${index + 1}`);
@@ -5040,6 +5091,9 @@ function createWorkbench(node) {
         q("[data-generate]").textContent = runtime.buttonText;
         setGenerationProgress({ ...(runtime.progress || generationProgress), title: "正在停止", actionDetail: "当前任务" });
         try {
+            const optimizing = promptOptimizer.isBusy();
+            await promptOptimizer.cancel();
+            if (optimizing && !runtime.currentBatch?.promptId) return;
             await api.fetchApi("/interrupt", { method: "POST" });
         } catch (error) {
             console.warn("停止当前 ComfyUI 任务失败，批量队列仍会停止", error);
@@ -5171,6 +5225,7 @@ function createWorkbench(node) {
         clearInterval(selfLiftCompatibilityTimer);
         clearInterval(generationElapsedTimer);
         runtime.listeners.delete(renderGenerationProgress);
+        runtime.resultListeners.delete(receiveGeneratedResults);
         api.removeEventListener?.("xiantu_video_editor_stage", onDirectorInternalStage);
         Object.entries(globalExecutionHandlers).forEach(([name, handler]) => api.removeEventListener?.(name, handler));
         assetList.forEach((asset) => URL.revokeObjectURL(asset.url));

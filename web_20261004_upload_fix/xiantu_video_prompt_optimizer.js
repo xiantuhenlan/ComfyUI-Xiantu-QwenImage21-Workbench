@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
     model: "", mmproj: "", output_language: "zh", skill_id: OFFICIAL_SKILL.id,
     mmproj_model: "",
     context_length: 8192, gpu_layers: -1, max_tokens: 1200, temperature: 0.25,
+    autoOptimizeAll: false, autoOptimizeShotIds: [],
 };
 
 async function readResponse(path, options) {
@@ -19,6 +20,7 @@ async function readResponse(path, options) {
 
 const post = (path, body) => readResponse(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    ...(path.endsWith("/optimize") ? { timeoutMs: null } : {}),
 });
 
 export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, getShotContext, writePrompt, isGenerating }) {
@@ -45,11 +47,6 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
     let cancelled = false;
     let cancelling = null;
     const selectedScope = () => modal.querySelector('[name="optimization_scope"]:checked')?.value;
-    const targetsForScope = () => {
-        const scope = selectedScope();
-        if (scope === "all") return getShots();
-        return scope === "shot" ? [activeShot()].filter(Boolean) : [];
-    };
 
     function persistSettings() {
         node.properties ??= {};
@@ -106,9 +103,8 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
         for (const control of panel.querySelectorAll("input, select")) control.disabled = busy;
         model.disabled = busy || !catalog?.models?.length;
         projector.disabled = busy || projector.options.length < 2;
-        const hasPrompt = targetsForScope().some((item) => item.prompt.trim());
-        action("confirm").disabled = busy || loadingCatalog || !catalog?.dependency_installed || !model.value || !hasPrompt;
-        action("confirm").title = !selectedScope() ? "请先选择优化范围" : hasPrompt ? "" : "所选范围内没有可优化的提示词";
+        action("confirm").disabled = busy;
+        action("confirm").title = "";
         action("undo").disabled = busy || typeof original !== "string";
         action("original").hidden = typeof original !== "string";
         q("[data-xve-opt-original]").hidden = true;
@@ -166,13 +162,16 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
         }
     }
 
-    async function runAction(callback) {
+    async function runAction(callback, propagateError = false) {
         if (busy) return;
         busy = true;
         cancelled = false;
         renderActions();
         try { await callback(); }
-        catch (error) { setStatus(cancelled ? "已停止" : String(error.message || error), 0, !cancelled); }
+        catch (error) {
+            setStatus(cancelled ? "已停止" : String(error.message || error), 0, !cancelled);
+            if (propagateError) throw error;
+        }
         finally {
             if (cancelling) await cancelling;
             cancelling = null;
@@ -183,9 +182,9 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
         }
     }
 
-    async function optimize(targets) {
-        if (isGenerating()) throw new Error("请在当前生成结束后优化提示词。");
-        readSettings();
+    async function optimize(targets, duringGeneration = false, reportProgress = () => {}) {
+        if (!duringGeneration && isGenerating()) throw new Error("请在当前生成结束后优化提示词。");
+        if (!duringGeneration) readSettings();
         const selectedSkill = skills.get(settings.skill_id);
         const jobs = targets.filter((shot) => shot.prompt.trim());
         let completed = 0;
@@ -203,7 +202,12 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
                     if (detail?.task_id !== taskId) return;
                     taskStarted = true;
                     percent = Math.max(percent, Number(detail.percent) || 0);
-                    if (!cancelled) setStatus(`${prefix}${[detail.stage, detail.detail].filter(Boolean).join(" · ")}`, (completed * 100 + percent) / jobs.length);
+                    if (cancelled) {
+                        if (!cancelling) cancelling = post(`${PROMPT_ROUTE}/cancel`, { task_id: taskId }).catch((error) => setStatus(error.message, 0, true));
+                        return;
+                    }
+                    setStatus(`${prefix}${[detail.stage, detail.detail].filter(Boolean).join(" · ")}`, (completed * 100 + percent) / jobs.length);
+                    reportProgress(detail);
                 };
                 setStatus(`${prefix}等待本地优化引擎`, completed * 100 / jobs.length);
                 api.addEventListener(PROGRESS_EVENT, onProgress);
@@ -220,7 +224,7 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
                     throw new Error(`${shot.title} 已被修改，已保留当前原文。`);
                 }
                 shot.promptBeforeOptimize ??= {};
-                shot.promptBeforeOptimize[mode] = before;
+                if (typeof shot.promptBeforeOptimize[mode] !== "string") shot.promptBeforeOptimize[mode] = before;
                 writePrompt(shot, prompt);
                 completed++;
                 if (Array.isArray(response.validation_warnings) && response.validation_warnings.length) {
@@ -256,7 +260,11 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
 
     open.onclick = () => {
         modal.hidden = false;
-        for (const option of modal.querySelectorAll('[name="optimization_scope"]')) option.checked = false;
+        const selectedIds = settings.autoOptimizeShotIds || [];
+        for (const option of modal.querySelectorAll('[name="optimization_scope"]')) {
+            option.checked = settings.autoOptimizeAll ? option.value === "all"
+                : option.value === "shot" && selectedIds.includes(String(activeShot()?.id || ""));
+        }
         renderSettings();
         action("close").focus();
         source.textContent = "";
@@ -280,17 +288,30 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
     };
     action("close").onclick = close;
     modal.onclick = (event) => { if (event.target === modal) close(); };
-    action("confirm").onclick = () => runAction(() => optimize(targetsForScope()));
+    action("confirm").onclick = () => {
+        if (busy) return;
+        if (!loadingCatalog) readSettings();
+        const scope = selectedScope(), shotId = String(activeShot()?.id || "");
+        const selectedIds = (settings.autoOptimizeShotIds || []).filter((id) => id !== shotId);
+        settings.autoOptimizeAll = scope === "all";
+        settings.autoOptimizeShotIds = scope === "all" ? [] : scope === "shot" ? [...selectedIds, shotId] : selectedIds;
+        persistSettings();
+        close();
+    };
     action("refresh").onclick = () => { if (!busy) void refreshCatalog(); };
     action("install").onclick = () => runAction(() => installResource("runtime"));
     action("download-model").onclick = () => runAction(() => installResource("model"));
     action("download-projector").onclick = () => runAction(() => installResource("projector"));
-    action("stop").onclick = () => {
+    const cancelOptimization = async () => {
+        if (!busy || !currentTask) return false;
         cancelled = true;
         action("stop").disabled = true;
         setStatus("正在停止优化…");
-        if (taskStarted) cancelling = post(`${PROMPT_ROUTE}/cancel`, { task_id: currentTask }).catch((error) => setStatus(error.message, 0, true));
+        if (taskStarted && !cancelling) cancelling = post(`${PROMPT_ROUTE}/cancel`, { task_id: currentTask }).catch((error) => setStatus(error.message, 0, true));
+        if (cancelling) await cancelling;
+        return true;
     };
+    action("stop").onclick = cancelOptimization;
     action("original").onclick = () => {
         const original = q("[data-xve-opt-original]");
         original.hidden = !original.hidden;
@@ -330,5 +351,13 @@ export function mountVideoPromptOptimizer({ root, node, activeShot, getShots, ge
         renderSettings();
     };
 
-    return { close, isBusy: () => busy };
+    const beforeGenerate = async (shot, reportProgress) => {
+        if (!settings.autoOptimizeAll && !(settings.autoOptimizeShotIds || []).includes(String(shot?.id || ""))) return false;
+        if (!String(shot?.prompt || "").trim()) throw new Error("当前分镜提示词为空，请先填写提示词");
+        if (busy) throw new Error("提示词优化器正忙，请等待当前任务完成");
+        await runAction(() => optimize([shot], true, reportProgress), true);
+        if (cancelled) throw new Error("提示词优化已停止");
+        return true;
+    };
+    return { close, isBusy: () => busy, beforeGenerate, cancel: cancelOptimization };
 }

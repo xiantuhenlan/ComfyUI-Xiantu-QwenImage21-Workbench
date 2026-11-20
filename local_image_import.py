@@ -94,6 +94,59 @@ def _select_sheet_rows(candidates):
     raise ValueError("表格没有可读取的数据")
 
 
+_SHEET_INTERNAL_COLUMNS = {
+    "分镜ID", "分镜勾选", "各模式提示词", "参考素材配置", "分镜标记配置", "工作流标记配置",
+}
+_SHEET_LONG_VALUES = "_闲兔长文本"
+_SHEET_VALUE_PREFIX = "xiantu-cell:"
+
+
+def _build_video_editor_xlsx(rows):
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "分镜表"
+    long_values = None
+    for row_number, row in enumerate(rows, 1):
+        for column, value in enumerate(row, 1):
+            if isinstance(value, str) and len(value) > 32767:
+                if long_values is None:
+                    long_values = workbook.create_sheet(_SHEET_LONG_VALUES)
+                    long_values.sheet_state = "veryHidden"
+                key = f"{row_number}-{column}"
+                for part, offset in enumerate(range(0, len(value), 16000)):
+                    long_values.append([key, part, value[offset:offset + 16000]])
+                    long_values.cell(long_values.max_row, 3).data_type = "s"
+                value = _SHEET_VALUE_PREFIX + key
+            cell = sheet.cell(row_number, column, value)
+            if isinstance(value, str):
+                cell.data_type = "s"
+    if rows:
+        for column, title in enumerate(rows[0], 1):
+            if title in _SHEET_INTERNAL_COLUMNS:
+                sheet.column_dimensions[get_column_letter(column)].hidden = True
+        sheet.auto_filter.ref = sheet.dimensions
+    sheet.freeze_panes = "A2"
+    output = io.BytesIO()
+    try:
+        workbook.save(output)
+        return output.getvalue()
+    finally:
+        workbook.close()
+
+
+def _sheet_long_values(workbook):
+    if _SHEET_LONG_VALUES not in workbook.sheetnames:
+        return {}
+    parts = {}
+    for key, part, value in workbook[_SHEET_LONG_VALUES].iter_rows(values_only=True):
+        parts.setdefault(str(key), []).append((int(part), str(value or "")))
+    return {_SHEET_VALUE_PREFIX + key: "".join(value for _, value in sorted(values))
+            for key, values in parts.items()}
+
+
 def _parse_xlsx_rows(data):
     try:
         from openpyxl import load_workbook
@@ -102,10 +155,14 @@ def _parse_xlsx_rows(data):
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     candidates = []
     try:
+        long_values = _sheet_long_values(workbook)
         for sheet in workbook.worksheets:
+            if sheet.title == _SHEET_LONG_VALUES:
+                continue
             rows = []
             for row in sheet.iter_rows():
-                rows.append([_sheet_cell_text(cell.value, cell.number_format) for cell in row[:128]])
+                values = [_sheet_cell_text(cell.value, cell.number_format) for cell in row[:128]]
+                rows.append([long_values.get(value, value) for value in values])
                 if len(rows) >= 10000:
                     break
             candidates.append((sheet.title, rows))
@@ -616,6 +673,16 @@ async def apply_common_assets(request):
         return _asset_error(_AssetLibraryError("asset_input_copy_failed", f"复制资产到 ComfyUI/input 失败：{error}", 500))
     except Exception as error:
         return _asset_error(error)
+
+
+@PromptServer.instance.routes.post("/xiantu/video-editor/export-sheet")
+async def export_video_editor_sheet(request):
+    try:
+        data = await request.json()
+        content = _build_video_editor_xlsx(data["rows"])
+        return web.Response(body=content, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as error:
+        return _error(f"导出表格失败：{error}")
 
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/parse-sheet")
