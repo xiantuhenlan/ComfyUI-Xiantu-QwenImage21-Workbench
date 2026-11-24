@@ -437,15 +437,18 @@ async def merge_results(request):
         project_id = request.match_info["project_id"]
         payload = await request.json()
         wanted = {str(value) for value in payload.get("result_ids") or []}
+        kind = payload.get("result_kind", "after")
+        if kind not in ("before", "after"):
+            raise ValueError("请选择放大前或放大后的视频合并")
         state = read_state(project_id)
         records = [item for item in state.get("results") or []
-                   if str(item.get("id")) in wanted and _result_kind(item) == "after"]
+                   if str(item.get("id")) in wanted and _result_kind(item) == kind]
         records.sort(key=lambda item: (
             int(item.get("segment_index")) if str(item.get("segment_index", "")).lstrip("-").isdigit() else 10**9,
             str(item.get("filename") or ""),
         ))
         if len(records) < 2:
-            raise ValueError("请至少选择两个放大后视频")
+            raise ValueError(f"请至少选择两个{'放大前' if kind == 'before' else '放大后'}视频")
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             try:

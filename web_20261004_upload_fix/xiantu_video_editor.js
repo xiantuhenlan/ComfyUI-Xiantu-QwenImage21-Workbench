@@ -3976,14 +3976,22 @@ function createWorkbench(node) {
     q("[data-monitor-hardware]").onchange = (event) => { cleanupSettings.monitorHardware = event.target.checked; syncHardwareMonitor(); save(); };
     syncHardwareMonitor();
     syncGenerationClock();
-    const cleanupResources = async (settings = cleanupSettings) => {
+    let cleanupController = null;
+    const cleanupResources = async (settings = cleanupSettings, cancellable = true) => {
         if (!settings.cache && !settings.vram && !settings.models) return;
+        const controller = new AbortController();
+        if (cancellable) cleanupController = controller;
         try {
-            const response = await api.fetchApi("/xiantu/video-editor/cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok || payload.warnings?.length) console.warn("视频导演台分镜间资源卸载警告（继续后续分镜）", payload.error || payload.warnings || response.status);
+            const response = await api.fetchApi("/xiantu/video-editor/cleanup", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(settings), signal: controller.signal,
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || result?.warnings?.length) console.warn("分镜间资源清理警告", result?.error || result?.warnings || response.status);
         } catch (error) {
-            console.warn("视频导演台分镜间资源卸载请求失败（继续后续分镜）", error);
+            if (!controller.signal.aborted) console.warn("分镜间资源清理请求失败", error);
+        } finally {
+            if (cleanupController === controller) cleanupController = null;
         }
     };
     const historyNodeBelongsToWorkbench = (nodes, id, seen = new Set()) => {
@@ -5060,7 +5068,7 @@ function createWorkbench(node) {
                 button.textContent = runtime.buttonText;
                 button.title = "";
                 setGenerationProgress({ title: "已停止，正在卸载", actionDetail: "模型、显存和缓存", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "load", phasePercent: null });
-                await cleanupResources({ cache: true, vram: true, models: true });
+                void cleanupResources({ cache: true, vram: true, models: true }, false);
                 setGenerationProgress({ title: "已停止", actionDetail: "", batchDetail: `分镜 ${done}/${jobs.length}`, percent: done / Math.max(1, jobs.length) * 100, phase: "prepare", phasePercent: 0 });
             } else {
                 if (failedShot && failedShot.status !== "done") failedShot.status = "error";
@@ -5086,11 +5094,14 @@ function createWorkbench(node) {
         if (!runtime.busy) return startGenerate();
         if (runtime.cancelRequested) return;
         runtime.cancelRequested = true;
+        const stoppingCleanup = Boolean(cleanupController);
+        cleanupController?.abort();
         runtime.buttonText = "正在停止…";
         q("[data-generate]").disabled = true;
         q("[data-generate]").textContent = runtime.buttonText;
         setGenerationProgress({ ...(runtime.progress || generationProgress), title: "正在停止", actionDetail: "当前任务" });
         try {
+            if (stoppingCleanup) return;
             const optimizing = promptOptimizer.isBusy();
             await promptOptimizer.cancel();
             if (optimizing && !runtime.currentBatch?.promptId) return;

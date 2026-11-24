@@ -965,19 +965,23 @@ function createWorkbench(node) {
         hardwareTimer = 0;
         if (state.cleanupSettings.monitorHardware) { refreshHardware(); hardwareTimer = window.setInterval(refreshHardware, 2000); }
     };
+    let cleanupController = null;
     const cleanupResources = async () => {
         const settings = state.cleanupSettings;
         if (!settings.cache && !settings.vram && !settings.models) return;
+        const controller = new AbortController();
+        cleanupController = controller;
         try {
             const response = await api.fetchApi("/xiantu/video-editor/cleanup", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(settings),
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(settings), signal: controller.signal,
             });
             const result = await response.json().catch(() => ({}));
-            if (!response.ok || result?.warnings?.length) console.warn("图片工作台分镜间资源卸载警告（继续后续分镜）", result?.error || result?.warnings || response.status);
+            if (!response.ok || result?.warnings?.length) console.warn("分镜间资源清理警告", result?.error || result?.warnings || response.status);
         } catch (error) {
-            console.warn("图片工作台分镜间资源卸载请求失败（继续后续分镜）", error);
+            if (!controller.signal.aborted) console.warn("分镜间资源清理请求失败", error);
+        } finally {
+            if (cleanupController === controller) cleanupController = null;
         }
     };
     const activeShot = () => state.shots.find((shot) => shot.id === state.activeShotId) || state.shots[0];
@@ -2099,6 +2103,7 @@ Qwen Image 2.1 使用清晰、具体的自然语言指令，不需要 MOSS Layou
         q("[data-generate]").disabled = true;
         q("[data-generate]").textContent = "正在停止…";
         q("[data-generate-current]").disabled = true;
+        if (cleanupController) { cleanupController.abort(); return; }
         try {
             await api.fetchApi("/interrupt", { method: "POST" });
         } catch (error) {

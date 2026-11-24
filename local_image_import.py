@@ -4,7 +4,6 @@ import asyncio
 import csv
 import ctypes
 import hashlib
-import gc
 import ipaddress
 import io
 import json
@@ -24,6 +23,7 @@ from aiohttp import web
 
 import folder_paths
 from server import PromptServer
+from .resource_cleanup import cleanup_idle_resources
 
 
 _IMAGE_EXTENSIONS = {
@@ -1043,36 +1043,25 @@ async def video_editor_latent_cache_status(request):
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/cleanup")
 async def video_editor_cleanup(request):
-    """Release only the resources explicitly selected by the user."""
+    """Keep model/cache cleanup on the generation worker, outside the web loop."""
     try:
         payload = await request.json()
     except Exception:
         payload = {}
-    released = []
-    warnings = []
-    if bool(payload.get("models")):
-        try:
-            import comfy.model_management as model_management
-            model_management.unload_all_models()
-            released.append("models")
-        except Exception as error:
-            warnings.append(f"卸载模型失败：{error}")
-    if bool(payload.get("cache")):
-        try:
-            gc.collect()
-            released.append("cache")
-        except Exception as error:
-            warnings.append(f"卸载缓存失败：{error}")
-    if bool(payload.get("vram")):
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
-            released.append("vram")
-        except Exception as error:
-            warnings.append(f"卸载显存失败：{error}")
-    return web.json_response({"ok": True, "released": released, "warnings": warnings})
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "资源清理参数必须是 JSON 对象"}, status=400)
+
+    def check_connection():
+        if request.transport is None or request.transport.is_closing():
+            raise RuntimeError("资源清理已取消")
+
+    try:
+        result = await asyncio.to_thread(cleanup_idle_resources, PromptServer.instance, payload, check_connection)
+        warnings = result["warnings"]
+        released = [key for key in ("models", "cache", "vram") if payload.get(key)] if not warnings else []
+        return web.json_response({"ok": True, "released": released, "warnings": warnings})
+    except Exception as error:
+        return web.json_response({"ok": True, "released": [], "warnings": [f"资源清理失败：{error}"]})
 
 
 @PromptServer.instance.routes.post("/xiantu/video-editor/open-output")

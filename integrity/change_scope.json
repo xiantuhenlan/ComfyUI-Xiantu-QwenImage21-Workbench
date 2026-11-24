@@ -1,17 +1,15 @@
 {
   "schema": 1,
-  "createdAt": "2026-11-20",
-  "reason": "用户确认已测试修复，授权发布0.4.7；仅登记优化、表格、视频结果同步、数字人停止与发布元数据，保留原始0.4.6节点基线。",
-  "allowedNodes": [
-    "XiantuDigitalHumanStudioV2",
-    "XiantuVideoEditorWorkbench"
-  ],
+  "createdAt": "2026-11-24",
+  "reason": "用户授权发布已测试修复，仅修改发布元数据，所有节点与功能冻结。",
+  "allowedNodes": [],
   "newNodes": [],
   "protectedNodes": [
     "XiantuDigitalHumanAudioOutput",
     "XiantuDigitalHumanImageOutput",
     "XiantuDigitalHumanPromptOutput",
     "XiantuDigitalHumanStudio",
+    "XiantuDigitalHumanStudioV2",
     "XiantuGroupSwitch",
     "XiantuH3ContinuationDataBridge",
     "XiantuH3LatentContinuation",
@@ -32,90 +30,24 @@
     "XiantuUniversalRelay",
     "XiantuVideoContinuationModelPatch",
     "XiantuVideoContinuationTrim",
+    "XiantuVideoEditorWorkbench",
     "XiantuVideoFaceRepair",
     "XiantuVideoLatentCacheLoad",
     "XiantuVideoLatentCacheSave"
   ],
-  "allowedFeatures": {
-    "XiantuDigitalHumanStudioV2": [
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::studio"
-    ],
-    "XiantuVideoEditorWorkbench": [
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::__remainder__",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::createWorkbench",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadXlsx"
-    ]
-  },
-  "protectedFeatures": {
-    "XiantuDigitalHumanStudioV2": [
-      "backend::INPUT_TYPES",
-      "backend::IS_CHANGED",
-      "backend::__class_remainder__",
-      "backend::process",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::__remainder__",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::button",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::jsonFetch",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::open",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::repairPorts",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::shell",
-      "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::time"
-    ],
-    "XiantuVideoEditorWorkbench": [
-      "backend::INPUT_TYPES",
-      "backend::VALIDATE_INPUTS",
-      "backend::__class_remainder__",
-      "backend::run",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyFunctionGroupModes",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyTag",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::begin",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::clearTag",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::compactDirectorNodeSnapshot",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::connect",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::connectSelfLiftContinuation",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::connectedSelfLiftNodes",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::finalizedVideoUrl",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::freshSeed",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::functionGroupMembers",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::functionTagDisplayName",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::hideInternalWidget",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::injectWorkflowSeed",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::installInlineFallback",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::open",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::parseCsv",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::persistedAssetUrl",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::readDirectorRecovery",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::readFunctionTag",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::refreshWorkflowSeed",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::remove",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::repairFinalizedVideoElements",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::scopeWorkbenchPrompt",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::setFunctionGroupTag",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetJson",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetNodeMapping",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetRemapSelections",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::sheetRestoreFunctionMarks",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::source",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::workbenchGraphScope",
-      "frontend::web_20261004_upload_fix/xiantu_video_editor.js::writeDirectorRecovery"
-    ]
-  },
+  "allowedFeatures": {},
+  "protectedFeatures": {},
   "allowedFiles": [
     "CHANGELOG.md",
-    "local_image_import.py",
+    "README.md",
     "plugin_manifest.json",
-    "pyproject.toml",
-    "video_prompt_optimizer.py",
-    "web_20261004_upload_fix/xiantu_digital_human_v2.js",
-    "web_20261004_upload_fix/xiantu_video_editor.js",
-    "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js"
+    "pyproject.toml"
   ],
   "protectedFiles": [
     ".comfyignore",
     ".gitignore",
     "LICENSE",
     "MOSS_IMAGE_OFFICIAL_PROMPT_REFERENCE.md",
-    "README.md",
     "UPDATE_RULES.md",
     "__init__.py",
     "digital_human.py",
@@ -129,11 +61,13 @@
     "h3_latent_continuation.py",
     "image_asset_workbench.py",
     "integrations/__init__.py",
+    "local_image_import.py",
     "lora_manager.py",
     "moss_image_asset_workbench.py",
     "nodes.py",
     "pose.py",
     "requirements.txt",
+    "resource_cleanup.py",
     "sampler_relay.py",
     "sigmas_relay.py",
     "story_model_lora.py",
@@ -146,8 +80,10 @@
     "video_editor.py",
     "video_latent_cache.py",
     "video_postprocess.py",
+    "video_prompt_optimizer.py",
     "web_20261004_upload_fix/assets/xiantu-rabbit-logo.png",
     "web_20261004_upload_fix/xiantu_digital_human_v2.css",
+    "web_20261004_upload_fix/xiantu_digital_human_v2.js",
     "web_20261004_upload_fix/xiantu_digital_human_v4.js",
     "web_20261004_upload_fix/xiantu_director_apps.js",
     "web_20261004_upload_fix/xiantu_group_switch.js",
@@ -163,12 +99,14 @@
     "web_20261004_upload_fix/xiantu_story_model_lora.js",
     "web_20261004_upload_fix/xiantu_storyboard_director.js",
     "web_20261004_upload_fix/xiantu_universal_relay.js",
-    "web_20261004_upload_fix/xiantu_video_editor.css"
+    "web_20261004_upload_fix/xiantu_video_editor.css",
+    "web_20261004_upload_fix/xiantu_video_editor.js",
+    "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js"
   ],
   "before": {
     "schema": 1,
     "algorithm": "SHA256",
-    "generatedAt": "2026-11-19T15:20:46.484327+00:00",
+    "generatedAt": "2026-11-23T15:35:33.007227+00:00",
     "plugin": "XiantuQwenImage21Director",
     "activeWebDirectory": "web_20261004_upload_fix",
     "nodes": {
@@ -626,8 +564,8 @@
             "name": "open",
             "file": "web_20261004_upload_fix/xiantu_digital_human_v2.js",
             "lines": [
-              809,
-              809
+              852,
+              852
             ],
             "sha256": "053772f55659e66ee36d234fd83b468819134eb6f35bf33be3192938735d89f2"
           },
@@ -636,8 +574,8 @@
             "name": "repairPorts",
             "file": "web_20261004_upload_fix/xiantu_digital_human_v2.js",
             "lines": [
-              787,
-              806
+              830,
+              849
             ],
             "sha256": "8c7a7eeb0937baef9314a4354256b6af4205d6f357dd077ba3f34956b20906dd"
           },
@@ -657,9 +595,9 @@
             "file": "web_20261004_upload_fix/xiantu_digital_human_v2.js",
             "lines": [
               139,
-              780
+              823
             ],
-            "sha256": "ac2956bc9ca32215d5a5a42a59c0a68ce05ad177d3f1f06b85cbc2f6a7e44da5"
+            "sha256": "69b4fefa95ad9a8c5b074dab490dc7a3d15b5090b3be62d5b6cd3aede50fa259"
           },
           "frontend::web_20261004_upload_fix/xiantu_digital_human_v2.js::time": {
             "kind": "frontend-function",
@@ -672,7 +610,7 @@
             "sha256": "9878d46e87a5f712004b36066a8d0b45a5d946f742a335c8fb03a7b228378a96"
           }
         },
-        "fingerprint": "64d336a61ea49b1ec85167d2bb33a2a77faaf614b86f86e6e9c7484d53980204"
+        "fingerprint": "a4fa2df72324d963752972389ac07ff5a245f8651a80e086ca8d30ebe7d017b5"
       },
       "XiantuGroupSwitch": {
         "displayName": "闲兔｜组开关管理",
@@ -968,9 +906,9 @@
             "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
             "lines": [
               1060,
-              2984
+              2989
             ],
-            "sha256": "fd8c22ccfe5dd0ac232586587c146cbc95b90df5741156261ef845186e7ee884"
+            "sha256": "99fe952fe6d1428e3e77f2c50ca046a6791aa73a8be7e6e02aab6c50c7ea8f38"
           },
           "frontend::web_20261004_upload_fix/xiantu_image_asset_workbench.js::kreaLoraEnabled": {
             "kind": "frontend-function",
@@ -1057,8 +995,8 @@
             "name": "open",
             "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
             "lines": [
-              3045,
-              3049
+              3050,
+              3054
             ],
             "sha256": "0cc014592f01b97d5d8baa9976fadb00bd308b245f94b18b4382beea198d9a4a"
           },
@@ -1097,8 +1035,8 @@
             "name": "pruneLegacySlots",
             "file": "web_20261004_upload_fix/xiantu_image_asset_workbench.js",
             "lines": [
-              2994,
-              3004
+              2999,
+              3009
             ],
             "sha256": "a6c81af4105edb93d5f42fe0eff437dff9ef6b2ecf23b8a9c381980f725731d5"
           },
@@ -1173,7 +1111,7 @@
             "sha256": "96a4aeef6bcfb4f43cea1f2f3545ab3a1e287b74ccb71759a5c8ac2ab9524b78"
           }
         },
-        "fingerprint": "0782f61c9b7e78363016faa158ed744e3bee2053bed973274f111fb9e45613f5"
+        "fingerprint": "ea19a82045f90946a7d61e3d2f06f7524580b3644f858d020f0d22a087e0659a"
       },
       "XiantuKrea2ImageAssetWorkbench": {
         "displayName": "Krea-2图片资产工作台",
@@ -1446,9 +1384,9 @@
             "file": "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js",
             "lines": [
               784,
-              2144
+              2149
             ],
-            "sha256": "d9c89a5436e8f8def07bea5942a87ac3ee9ad54b73a872aaef49c8b0444fcb58"
+            "sha256": "40cd8f111c8eebed59df496d2bc74c2e21e7d80b5641292ae7227881ca1941b3"
           },
           "frontend::web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js::modelGroupProfileForNode": {
             "kind": "frontend-function",
@@ -1515,8 +1453,8 @@
             "name": "open",
             "file": "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js",
             "lines": [
-              2199,
-              2207
+              2204,
+              2212
             ],
             "sha256": "037c582624b4c5d7662aa7a7c0a37d36a21acabde5a641f7c122ebb1cf5b57dd"
           },
@@ -1545,8 +1483,8 @@
             "name": "pruneLegacySlots",
             "file": "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js",
             "lines": [
-              2150,
-              2160
+              2155,
+              2165
             ],
             "sha256": "189cd232a8875bbfba855f778d3588b005197faf54340128e1e309c0d0163af4"
           },
@@ -1601,7 +1539,7 @@
             "sha256": "0b421de4932337380b0dc48cd82e700182b3a6ca0c173ec88e9de45b91052726"
           }
         },
-        "fingerprint": "00f63f52c64fde0f700833a0e7a00fa4a54fd662f9cd0fb1f2584e22f152a13f"
+        "fingerprint": "b9c2f4e572cff33796d8b9ed38660677b2bebe64c744d0831779f17bfb1794e3"
       },
       "XiantuPoseExtractor": {
         "displayName": "闲兔姿势提取",
@@ -2649,7 +2587,7 @@
             "kind": "frontend-remainder",
             "name": "前端结构、常量、模板与非函数代码",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
-            "sha256": "f8bf6325197cfc2ff915ee4569ea4de11f875d4c74ffc92f761f894e2abb0e44"
+            "sha256": "425ceb06dba018b5e95246c75fee7e1219bc568014f3988d242bfa5b85979ba0"
           },
           "frontend::web_20261004_upload_fix/xiantu_video_editor.js::applyFunctionGroupModes": {
             "kind": "frontend-function",
@@ -2666,8 +2604,8 @@
             "name": "applyTag",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              5295,
-              5311
+              5361,
+              5377
             ],
             "sha256": "ba43c84e620f74f419dc35de27acdeffcc28b9016de51799dec6a3b4563cc002"
           },
@@ -2686,8 +2624,8 @@
             "name": "clearTag",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              5312,
-              5318
+              5378,
+              5384
             ],
             "sha256": "87a5a294b5ae2e987505236caf7b7b0d939e6116bcb14d19090e19d5c36aa636"
           },
@@ -2736,20 +2674,20 @@
             "name": "createWorkbench",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              682,
-              5230
+              689,
+              5296
             ],
-            "sha256": "597c17878ae58444e717bf2be964a13dd958d490c3549e353b9ee7c24b69dc7e"
+            "sha256": "706e99f0c35ee09b7521beb63e0ff922360c339e68082d29137b5244a2eb0e01"
           },
-          "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadCsv": {
+          "frontend::web_20261004_upload_fix/xiantu_video_editor.js::downloadXlsx": {
             "kind": "frontend-function",
-            "name": "downloadCsv",
+            "name": "downloadXlsx",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
               668,
-              674
+              681
             ],
-            "sha256": "f2c351c98823f42b0007eb6c039d034001d5d8255d9bbf4b4e2a157feed4ae21"
+            "sha256": "de11a49d59e88dd54e7d6c238f7c438a7e1c27124ede948c6eb367f9616eb8d6"
           },
           "frontend::web_20261004_upload_fix/xiantu_video_editor.js::finalizedVideoUrl": {
             "kind": "frontend-function",
@@ -2796,8 +2734,8 @@
             "name": "hideInternalWidget",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              5366,
-              5376
+              5432,
+              5442
             ],
             "sha256": "560a7bfd1b8e4a2042721df1ef79a2350884e34be5523f041cc91e5e7367c911"
           },
@@ -2826,8 +2764,8 @@
             "name": "open",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              5401,
-              5412
+              5467,
+              5478
             ],
             "sha256": "f4cf0f0ac2321c062f2f51c8d39e7a5017c9e1d1d37b97d9784421512ab559a3"
           },
@@ -2846,8 +2784,8 @@
             "name": "persistedAssetUrl",
             "file": "web_20261004_upload_fix/xiantu_video_editor.js",
             "lines": [
-              676,
-              680
+              683,
+              687
             ],
             "sha256": "37364538c0c750ef9b3c13f1dadcac912ae66c4def00b83fb888a612d39eeb24"
           },
@@ -2992,7 +2930,7 @@
             "sha256": "3fa0593b4cdbaf72cca64cce0aa7c4cb9d7bf325bf0aef6e7dc4991816002be5"
           }
         },
-        "fingerprint": "9ed189729c8eb95282713e7f2c4698c85ccd7dfe9680736dfaedc687a9819262"
+        "fingerprint": "da13df4dfec2d69519bd41e77829fd1f19d612556b460854d0683bf8e879137d"
       },
       "XiantuVideoFaceRepair": {
         "displayName": "闲兔｜远景人脸修复",
@@ -3140,8 +3078,8 @@
         "size": 146
       },
       "CHANGELOG.md": {
-        "sha256": "aff83e328310cfd79db9c80e530ec155809719cbd64a1b596f38e584fd5e1546",
-        "size": 33337
+        "sha256": "5a8636110767db9181ed25416a493581d51f40c05bb9414cd3dd1c32bf7ae0f1",
+        "size": 34746
       },
       "LICENSE": {
         "sha256": "e6df8f0619987e25790f0721114e025679ffe8a9d6b3253eb053dc89d854192b",
@@ -3176,8 +3114,8 @@
         "size": 19410
       },
       "digital_human_v2_impl/routes.py": {
-        "sha256": "e08e06790d7f1db7648e5cb65ea54adcc1c0857909e1662857969bc485d07cf9",
-        "size": 22585
+        "sha256": "a2649b03cbd09bb663fc39ee726289ad34e19b68d3989292d0979c75d1588cff",
+        "size": 22800
       },
       "digital_human_v2_impl/storage.py": {
         "sha256": "08b7f3096fef426c39c651b87ec88dc46a84ba90874a1176eb837f006e28990e",
@@ -3208,8 +3146,8 @@
         "size": 59
       },
       "local_image_import.py": {
-        "sha256": "611a4147b814cc6f9b7b3c673fcfae06b32593435d9cb23b220e1ea203acc641",
-        "size": 60131
+        "sha256": "d8c1a8df513bbd7defcc408c3817588dba248d15d207f3cf67e6d4b905f31377",
+        "size": 63047
       },
       "lora_manager.py": {
         "sha256": "7bbdda08b66716dd6ddca0bd7b9daf418a416e35387874b96ef868fea746402f",
@@ -3224,7 +3162,7 @@
         "size": 10221
       },
       "plugin_manifest.json": {
-        "sha256": "2147ce61d146d55c7bf5a7dbbc34d08db088c1c287bf7fb34c45348fb4ffb707",
+        "sha256": "7e6184997ed191e663862ad7f7f0069dbf787d9559a048e4aa1508ff2a1fc676",
         "size": 415
       },
       "pose.py": {
@@ -3232,12 +3170,16 @@
         "size": 6409
       },
       "pyproject.toml": {
-        "sha256": "0b06849ed9d92d490b36ada669f079645a803c4dcca7db486f66e1cf560eea10",
-        "size": 764
+        "sha256": "926962c670a56ea695b8b4c1ce971a64f270739be2b09af339b327cd22b72424",
+        "size": 787
       },
       "requirements.txt": {
         "sha256": "0cb1c864f9e08a2cf2b19288c33aee5c3664972cdede6c8c91313607f838f1cb",
         "size": 64
+      },
+      "resource_cleanup.py": {
+        "sha256": "eca35b2ad8cb5b8bbfd06bed20e1c10db345f6e6a23b30f1fa6af3a0a56c8e9b",
+        "size": 5545
       },
       "sampler_relay.py": {
         "sha256": "0524053e19d38dc7dfa3e6ff9cdef29f412d195ee6c41dfccd80b0bde6786d71",
@@ -3288,8 +3230,8 @@
         "size": 16125
       },
       "video_prompt_optimizer.py": {
-        "sha256": "25525a97f73fe9745bc9467cf2570b3f23fa0717789d494c58be51a5df9889fd",
-        "size": 53976
+        "sha256": "a3bc262064fa305d7f6a897bb118ea657fdb23e2ab4a2fadf5fc4fc70f269eaf",
+        "size": 56495
       },
       "web_20261004_upload_fix/assets/xiantu-rabbit-logo.png": {
         "sha256": "62fbbd3ccecfa87aea6938abf0fe884e5038d09737b8a8732a523e5a3c0aaa2f",
@@ -3300,8 +3242,8 @@
         "size": 44240
       },
       "web_20261004_upload_fix/xiantu_digital_human_v2.js": {
-        "sha256": "81cf13282a428d46d0a8731ad8421fe959b0ae48dfc71d85ef8dc87d24d73789",
-        "size": 94944
+        "sha256": "ecc54aee827331f5429c4128309cee40006d04c23d568a9fe7c6487464f196b8",
+        "size": 98182
       },
       "web_20261004_upload_fix/xiantu_digital_human_v4.js": {
         "sha256": "6055851a5a73e5075b256b65e32b8a23375753a02c544cf5de07cb5e93160917",
@@ -3320,8 +3262,8 @@
         "size": 50673
       },
       "web_20261004_upload_fix/xiantu_image_asset_workbench.js": {
-        "sha256": "4fd0e756d9cdf03b518955852a823b9f8bc8b3dfd5429f1d05ff91ef347c99eb",
-        "size": 289261
+        "sha256": "ea0a20513edb776f535329c2d92177c62d453402e086d0c30bfa418d6a2aaf15",
+        "size": 289516
       },
       "web_20261004_upload_fix/xiantu_krea2_prompts.js": {
         "sha256": "73e3c279fdd399a91910358583f36156c8b3be5a0771682910060b653ccc2372",
@@ -3336,8 +3278,8 @@
         "size": 46192
       },
       "web_20261004_upload_fix/xiantu_moss_image_asset_workbench.js": {
-        "sha256": "91ce65a1bfa64130275c2f063c6e7145ea79d0d0506cd08c621c1d059a7ee635",
-        "size": 229706
+        "sha256": "fd636cf460479cdd6a5789c3e9596890ea836c7a5758c8a3fa0565547cdb24b9",
+        "size": 229961
       },
       "web_20261004_upload_fix/xiantu_qwen_image21_director.js": {
         "sha256": "500af4ee8ac70c9867ee5ecd2f4be805f1e0e7bb8896133d7825e22c9642a2a3",
@@ -3368,12 +3310,12 @@
         "size": 117555
       },
       "web_20261004_upload_fix/xiantu_video_editor.js": {
-        "sha256": "00f45605f2822ec848003ac0d3ced0e3fee2ff33438f71c7c38505cbe11eefb6",
-        "size": 352934
+        "sha256": "61375527a90eb2dc06446cccbdd39d3a828a7fd7fd782054698302ea10a76c6f",
+        "size": 362364
       },
       "web_20261004_upload_fix/xiantu_video_prompt_optimizer.js": {
-        "sha256": "b2bfd4d9eb401898966af736750baf67422abeecd2e9c9749821d6c15a3e4b52",
-        "size": 16724
+        "sha256": "7b31d5521d802f37828b4c31c3ea100820f72acb67f584a489eaa74ed050a12a",
+        "size": 18714
       }
     }
   }

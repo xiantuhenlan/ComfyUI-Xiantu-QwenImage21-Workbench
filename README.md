@@ -103,3 +103,5 @@ git pull --ff-only
 ## 许可证
 
 代码使用 [MIT License](LICENSE) 开源。第三方模型、素材和依赖遵循各自许可证。
+
+当前发布版本：`0.4.8`。完整仓库与更新清单地址见 `plugin_manifest.json`。
